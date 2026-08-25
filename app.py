@@ -12,8 +12,8 @@ Uso local:
     (o navegador abre sozinho em http://127.0.0.1:5000, sem login)
 
 Uso hospedado (ex.: Render): rodar via `gunicorn app:app --workers 1`, com
-as variáveis de ambiente APP_PASSWORD e SECRET_KEY definidas no host — ver
-a seção "Deploy" do README.
+as variáveis de ambiente APP_USERS (usuários e senhas com hash) e SECRET_KEY
+definidas no host — ver a seção "Deploy" do README.
 """
 
 from __future__ import annotations
@@ -38,18 +38,22 @@ from flask import (Flask, Response, jsonify, redirect, request,
                    render_template, send_file, session,
                    stream_with_context, url_for)
 from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import check_password_hash
 
 import auditar_relatorio as core
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 
-APP_PASSWORD = os.environ.get("APP_PASSWORD")
+try:
+    APP_USERS: dict[str, str] = json.loads(os.environ.get("APP_USERS") or "{}")
+except ValueError:
+    APP_USERS = {}
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=bool(APP_PASSWORD),
+    SESSION_COOKIE_SECURE=bool(APP_USERS),
 )
 
 _LOGIN_JANELA = 15 * 60  # 15 minutos
@@ -207,7 +211,7 @@ def _adicionar_cabecalhos_seguranca(resp: Response) -> Response:
 
 @app.before_request
 def _exigir_login():
-    if not APP_PASSWORD:
+    if not APP_USERS:
         return None
     if request.endpoint in ("login", "static"):
         return None
@@ -225,16 +229,21 @@ def login():
     erro = None
     if request.method == "POST":
         ip = request.remote_addr or "desconhecido"
+        usuario = (request.form.get("usuario") or "").strip()
+        senha = request.form.get("senha", "")
+        hash_salvo = APP_USERS.get(usuario)
         if _ip_bloqueado(ip):
             erro = "Muitas tentativas erradas. Aguarde alguns minutos."
-        elif secrets.compare_digest(request.form.get("senha", ""), APP_PASSWORD or ""):
+        elif hash_salvo and check_password_hash(hash_salvo, senha):
             session["autenticado"] = True
+            session["usuario"] = usuario
             session["ultimo_acesso"] = time.time()
             _login_tentativas.pop(ip, None)
+            print(f"[login] {usuario!r} autenticou (ip={ip})", flush=True)
             return redirect(url_for("index"))
         else:
             _registrar_tentativa_falha(ip)
-            erro = "Senha incorreta."
+            erro = "Usuário ou senha incorretos."
     return render_template("login.html", erro=erro)
 
 
@@ -292,6 +301,8 @@ def api_processar():
     provedor = body.get("provedor", "groq")
     modelo = body.get("modelo") or core.DEFAULT_MODELS.get(provedor)
     chave_ia = (body.get("chave_ia") or "").strip()
+    print(f"[processar] usuario={session.get('usuario')!r} alvo={alvo!r} ia={usar_ia}",
+          flush=True)
 
     def evento(d: dict) -> str:
         return json.dumps(d, ensure_ascii=False) + "\n"

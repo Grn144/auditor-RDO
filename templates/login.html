@@ -24,7 +24,8 @@
   <form class="card" method="post">
     <h1>🏗️ Auditor RDO</h1>
     {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
-    <input type="password" name="senha" placeholder="Senha da equipe" autofocus required>
+    <input type="text" name="usuario" placeholder="Usuário" autofocus required autocomplete="username">
+    <input type="password" name="senha" placeholder="Senha" required autocomplete="current-password">
     <button type="submit">Entrar</button>
   </form>
 </body>

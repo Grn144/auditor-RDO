@@ -121,18 +121,20 @@ python auditar_relatorio.py <obra_id> <relatorio_id> --modelo claude-sonnet-5
 
 ## Segurança
 
-Rodando localmente (`python app.py`, sem `APP_PASSWORD` definida), o app é
+Rodando localmente (`python app.py`, sem `APP_USERS` definida), o app é
 100% pessoal: escuta só em `127.0.0.1`, sem login, sem exposição de rede.
 Boa parte de um checklist de segurança genérico para aplicações web não se
 aplica a esse modo — sem banco de dados (não há RLS, criptografia de dados
-em banco, mass assignment ou queries SQL para parametrizar) e sem contas
-individuais por pessoa (não há senha por usuário para fazer hash).
+em banco, mass assignment ou queries SQL para parametrizar).
 
-Rodando hospedado (Render, com `APP_PASSWORD` definida — ver "Deploy"
-abaixo), uma tela de login protege o app, com bloqueio por tentativas
-erradas repetidas (rate limit simples). A sessão expira automaticamente
-após 30 minutos sem uso (pedindo a senha de novo) e também não sobrevive
-a fechar o navegador — não é um cookie "lembrar de mim". Em ambos os casos:
+Rodando hospedado (Render, com `APP_USERS` definida — ver "Deploy" abaixo),
+uma tela de login pede **usuário e senha** (um login por pessoa, não uma
+senha única compartilhada), com bloqueio por tentativas erradas repetidas
+(rate limit simples). As senhas ficam salvas só como **hash** (nunca em
+texto puro) — mesmo quem tiver acesso à variável de ambiente no Render não
+consegue recuperar a senha original. A sessão expira automaticamente após
+30 minutos sem uso (pedindo login de novo) e também não sobrevive a fechar
+o navegador — não é um cookie "lembrar de mim". Em ambos os casos:
 
 - O token de cada pessoa nunca é salvo no servidor — fica só no
   `localStorage` do navegador dela (veja "esquecer token salvo" na tela).
@@ -155,20 +157,30 @@ a fechar o navegador — não é um cookie "lembrar de mim". Em ambos os casos:
    - **Start command:** deixe em branco (o Render lê o `Procfile`
      automaticamente) ou use `gunicorn app:app --workers 1 --threads 4`.
 4. Em **Environment**, adicione as variáveis:
-   - `APP_PASSWORD` — a senha que a equipe vai usar para entrar no app.
+   - `APP_USERS` — um JSON com um usuário por pessoa da equipe, cada um com
+     o **hash** da senha (nunca a senha em texto puro). Gere o hash de cada
+     senha rodando, para cada pessoa:
+     ```bash
+     python -c "from werkzeug.security import generate_password_hash; print(generate_password_hash('a_senha_da_pessoa'))"
+     ```
+     e monte o JSON com o resultado, por exemplo:
+     ```json
+     {"joao": "scrypt:32768:8:1$...", "maria": "scrypt:32768:8:1$..."}
+     ```
    - `SECRET_KEY` — qualquer string longa e aleatória (ex.: gerada com
      `python -c "import secrets; print(secrets.token_hex(32))"`).
 5. Deploy. O Render expõe uma URL `https://` própria — HTTPS já vem pronto.
-6. Compartilhe a URL e a senha com a equipe. Cada pessoa cola seu próprio
-   token do Diário de Obra (e sua própria chave de IA, se for usar
-   auditoria) — nada disso fica salvo no servidor.
+6. Compartilhe a URL com a equipe, e a senha combinada com cada pessoa
+   individualmente (não precisa ser a mesma senha pra todo mundo). Cada
+   pessoa cola seu próprio token do Diário de Obra (e sua própria chave de
+   IA, se for usar auditoria) — nada disso fica salvo no servidor.
 
 **Importante:** o serviço precisa rodar com um único worker
 (`--workers 1`, já configurado no `Procfile`) — o cache de relatórios, o
 controle de tentativas de login e os zips prontos para download vivem em
 memória, e workers diferentes não veem a memória um do outro.
 
-**Importante:** `APP_PASSWORD` só funciona com segurança se o app rodar
+**Importante:** `APP_USERS` só funciona com segurança se o app rodar
 atrás de HTTPS com um proxy reverso confiável na frente — exatamente o que
 o Render (o caminho de deploy documentado acima) já fornece por padrão.
 Rodar este app com `PORT` definida mas sem um proxy real terminando TLS na
