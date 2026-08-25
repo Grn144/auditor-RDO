@@ -212,30 +212,9 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
   <aside class="sidebar">
     <div class="sb-brand"><div class="sb-logo">🏗️</div><b>Auditor RDO</b></div>
     <nav class="sb-nav">
-      <a class="navitem disabled" title="Em breve">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-        <span>Dashboard</span><span class="soon">em breve</span>
-      </a>
-      <a class="navitem disabled" title="Em breve">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l7-4 7 4v14"/><path d="M9 9h1M9 13h1M9 17h1M14 9h1M14 13h1M14 17h1"/></svg>
-        <span>Obras</span><span class="soon">em breve</span>
-      </a>
-      <a class="navitem disabled" title="Em breve">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
-        <span>Relatórios</span><span class="soon">em breve</span>
-      </a>
       <a class="navitem active">
         <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M3 12h3M18 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/><path d="M12 8l1.2 2.8L16 12l-2.8 1.2L12 16l-1.2-2.8L8 12l2.8-1.2Z"/></svg>
         <span>Auditoria IA</span>
-      </a>
-      <a class="navitem disabled" title="Em breve">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="m22 4-10 10-3-3"/></svg>
-        <span>Resultados</span><span class="soon">em breve</span>
-      </a>
-      <div class="sb-label">Sistema</div>
-      <a class="navitem disabled" title="Em breve">
-        <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
-        <span>Configurações</span><span class="soon">em breve</span>
       </a>
     </nav>
     {% if usuario %}
@@ -366,6 +345,7 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
         <div class="summary-grid" id="summary"></div>
         <div class="row">
           <button class="btn btn-primary" id="btnZip">⬇ Baixar .zip (fotos + auditoria.csv)</button>
+          <button class="btn btn-ghost hidden" id="btnPdf">⬇ Baixar relatório PDF</button>
         </div>
       </div>
 
@@ -380,7 +360,7 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
 
 <script>
 const $ = s => document.querySelector(s);
-let ESTADO = { fotos:[], zipId:"", numero:null };
+let ESTADO = { fotos:[], zipId:"", numero:null, modo:"" };
 
 const ICON = {
   ok: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m9 12 2 2 4-4"/></svg>',
@@ -471,7 +451,7 @@ function handleEventCarregar(ev){
   }else if(ev.tipo==="erro"){
     toast(ev.msg||"Falha ao carregar.");
   }else if(ev.tipo==="fim"){
-    ESTADO.fotos=ev.fotos; ESTADO.numero=ev.numero;
+    ESTADO.fotos=ev.fotos; ESTADO.numero=ev.numero; ESTADO.modo=ev.modo;
     renderReport(ev); renderGaleria(ev.fotos);
     $("#cardReport").classList.remove("hidden");
     $("#cardResult").classList.add("hidden");
@@ -592,6 +572,7 @@ function handleEvent(ev){
   }
   else if(ev.tipo==="fim"){ ESTADO.zipId=ev.zip_id;
     logln("Concluído."); renderResumo(ev.resumo); $("#cardResult").classList.remove("hidden");
+    $("#btnPdf").classList.toggle("hidden", ESTADO.modo!=="obra");
     $("#cardResult").scrollIntoView({behavior:"smooth",block:"start"}); }
   else if(ev.tipo==="erro"){ toast(ev.msg); logln("ERRO: "+ev.msg); }
 }
@@ -628,6 +609,7 @@ function renderResumo(r){
 }
 
 $("#btnZip").onclick=()=>{ if(ESTADO.zipId) location.href="/api/zip/"+ESTADO.zipId; };
+$("#btnPdf").onclick=()=>{ if(ESTADO.zipId) location.href="/api/pdf/"+ESTADO.zipId; };
 $("#btnTrocar").onclick=()=>{ $("#cardReport").classList.add("hidden");
   $("#cardProgress").classList.add("hidden"); $("#cardResult").classList.add("hidden");
   $("#galeria").innerHTML=""; $("#pageTitulo").textContent="Auditor RDO";

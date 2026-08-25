@@ -187,8 +187,20 @@ class DiarioObraClient:
 # Passo 1: mapa tarefaId -> código (item)
 # ----------------------------------------------------------------------------
 
-def montar_mapa_tarefas(client: DiarioObraClient, obra_id: str) -> dict[str, dict]:
-    """Mapeia tarefaId -> {codigo, grupo, grupo_desc}.
+def _descricao_curta(descricao: str) -> str:
+    """A descrição da tarefa vem com um bloco de cronograma repetido no
+    final (ex.: "FORNECIMENTO DE SEGURO DE OBRA \n-\nCRONOGRAMA: DE ...
+    ATÉ ..."). Isso já aparece nos prazos do cabeçalho, então pra exibição
+    (tabela de atividades, legenda de foto) usamos só a primeira linha."""
+    return (descricao or "").split("\n-\n")[0].strip()
+
+
+def montar_mapa_tarefas(
+    client: DiarioObraClient, obra_id: str
+) -> tuple[dict[str, dict], list[dict]]:
+    """Mapeia tarefaId -> {codigo, grupo, grupo_desc} e monta a lista
+    completa de atividades da obra (todas as tarefas, com ou sem foto —
+    usada na tabela de atividades do relatório PDF).
 
     Neste sistema a LETRA da etapa fica no grupo (ex: item="D",
     descricao="CONTROLE DE ACESSO") e o NÚMERO fica na tarefa (item="3").
@@ -197,6 +209,7 @@ def montar_mapa_tarefas(client: DiarioObraClient, obra_id: str) -> dict[str, dic
     print(">> Buscando lista de tarefas da obra...")
     dados = client.get_json(f"/obras/{obra_id}/lista-de-tarefas")
     mapa: dict[str, dict] = {}
+    atividades: list[dict] = []
     for grupo in dados.get("cronograma", []):
         letra = str(grupo.get("item") or "").strip()
         grupo_desc = (grupo.get("descricao") or "").strip()
@@ -210,12 +223,21 @@ def montar_mapa_tarefas(client: DiarioObraClient, obra_id: str) -> dict[str, dic
             codigo = numero
             if letra and codigo.upper().startswith(letra.upper()):
                 codigo = codigo[len(letra):].lstrip() or numero
+            descricao = (tarefa.get("descricao") or "").strip()
             mapa[tid] = {"codigo": codigo,
                          "grupo": letra, "grupo_desc": grupo_desc,
-                         "descricao": (tarefa.get("descricao") or "").strip(),
+                         "descricao": descricao,
                          "total_fotos": int(tarefa.get("totalFotos") or 0)}
+            producao = tarefa.get("controleDeProducao") or {}
+            atividades.append({
+                "grupo": letra, "grupo_desc": grupo_desc,
+                "codigo": codigo, "descricao": _descricao_curta(descricao),
+                "porcentagem": int(tarefa.get("porcentagem") or 0),
+                "quantidade": producao.get("quantidade"),
+                "unidade": producao.get("unidade"),
+            })
     print(f"  {len(mapa)} tarefas mapeadas.")
-    return mapa
+    return mapa, atividades
 
 
 # ----------------------------------------------------------------------------
@@ -276,7 +298,7 @@ def coletar_fotos_obra(client: DiarioObraClient, obra_id: str,
     """Modo OBRA: baixa as fotos de TODAS as tarefas da obra (percorrendo
     'Visualizar tarefa' para cada tarefa que tem fotos), organizadas por
     letra do grupo. `progresso` é um callback opcional (str) para status."""
-    mapa = montar_mapa_tarefas(client, obra_id)
+    mapa, atividades = montar_mapa_tarefas(client, obra_id)
     com_fotos = [(tid, info) for tid, info in mapa.items()
                  if info.get("total_fotos", 0) > 0]
 
@@ -329,19 +351,23 @@ def coletar_fotos_obra(client: DiarioObraClient, obra_id: str,
             foto.nome_arquivo = _nome_foto(codigo, i, ext)
             fotos.append(foto)
 
-    # Nome da obra para a pasta de destino.
+    # Cabeçalho da obra (nome, contrato, cliente, prazos...) — usado tanto
+    # para nomear a pasta de destino quanto para o cabeçalho do relatório
+    # em PDF. Se a busca falhar, segue só com o nome genérico.
     nome_obra = f"obra_{obra_id}"
+    cabecalho: dict = {}
     try:
-        info_obra = client.get_json(f"/obras/{obra_id}")
-        if info_obra.get("nome"):
-            nome_obra = info_obra["nome"]
+        cabecalho = client.get_json(f"/obras/{obra_id}")
+        if cabecalho.get("nome"):
+            nome_obra = cabecalho["nome"]
     except AppError:
         pass
 
     grupos = sorted({f.subpasta for f in fotos})
     log(f">> Total: {len(fotos)} fotos em {len(grupos)} grupos (obra: {nome_obra}).")
     contexto = {"modo": "obra", "obra_id": obra_id, "nome": nome_obra,
-                "total": len(fotos), "grupos": len(grupos)}
+                "total": len(fotos), "grupos": len(grupos),
+                "cabecalho": cabecalho, "atividades": atividades}
     return fotos, contexto
 
 
@@ -717,7 +743,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         fotos, ctx = coletar_fotos_obra(client, obra_id)
         pasta_padrao = _sanitizar_pasta(f"obra {ctx.get('nome', obra_id)}")
     else:
-        mapa = montar_mapa_tarefas(client, obra_id)
+        mapa, _atividades = montar_mapa_tarefas(client, obra_id)
         fotos, rel = coletar_fotos(client, obra_id, relatorio_id, mapa)
         pasta_padrao = f"relatorio_{rel.get('numero', 'x')}_{sanitizar(str(rel.get('data', '')))}"
 

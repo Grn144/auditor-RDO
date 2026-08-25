@@ -211,6 +211,64 @@ def test_limpar_zips_antigos_remove_expirados(app_module, tmp_path):
     assert not arquivo_zip.exists()
 
 
+def test_pdf_rota_gera_relatorio_valido(app_module, tmp_path):
+    mod = app_module(usuarios=None)
+    pasta = tmp_path / "fotos_teste"
+    (pasta / "a").mkdir(parents=True)
+    (pasta / "a" / "A1.jpg").write_bytes(b"fake-jpg-bytes")
+
+    zid = mod._zipar_diretorio(pasta, "obra_teste")
+    mod._zips[zid]["info"] = {
+        "modo": "obra",
+        "cabecalho": {"nome": "OBRA TESTE", "cliente": "ACME"},
+        "atividades": [{"grupo": "A", "grupo_desc": "PRÉ-OBRA", "codigo": "1",
+                        "descricao": "TAREFA 1", "porcentagem": 100,
+                        "quantidade": 1, "unidade": "VB"}],
+        "nome_arquivo": "obra_teste",
+    }
+    mod._zips[zid]["fotos_meta"] = [
+        {"codigo": "1", "descricao": "TAREFA 1", "subpasta": "a",
+         "grupo_desc": "PRÉ-OBRA", "nome_arquivo": "A1.jpg"},
+    ]
+
+    cliente = mod.app.test_client()
+    resp = cliente.get(f"/api/pdf/{zid}")
+    assert resp.status_code == 200
+    assert resp.data[:5] == b"%PDF-"
+    assert resp.headers["Content-Type"] == "application/pdf"
+    assert "obra_teste.pdf" in resp.headers.get("Content-Disposition", "")
+
+
+def test_pdf_id_desconhecido_da_404(app_module):
+    mod = app_module(usuarios=None)
+    cliente = mod.app.test_client()
+    resp = cliente.get("/api/pdf/nao-existe")
+    assert resp.status_code == 404
+
+
+def test_pdf_recusa_modo_relatorio(app_module, tmp_path):
+    """O relatório em PDF só está disponível pro modo "obra completa" —
+    modo "relatório específico" não tem cabeçalho/atividades coletados."""
+    mod = app_module(usuarios=None)
+    arquivo_zip = tmp_path / "rel.zip"
+    arquivo_zip.write_bytes(b"conteudo")
+    zid = "rel1"
+    mod._zips[zid] = {"caminho": arquivo_zip, "nome": "rel.zip",
+                      "criado_em": time.time(),
+                      "info": {"modo": "relatorio"}}
+    cliente = mod.app.test_client()
+    resp = cliente.get(f"/api/pdf/{zid}")
+    assert resp.status_code == 400
+
+
+def test_pdf_exige_login_quando_usuarios_configurados(app_module):
+    mod = app_module(usuarios={"joao": "segredo123"})
+    cliente = mod.app.test_client()
+    resp = cliente.get("/api/pdf/nao-existe-e-nao-importa", follow_redirects=False)
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+
 def test_zip_exige_login_quando_usuarios_configurados(app_module):
     """Pina que o before_request cobre a rota /api/zip/<id> (adicionada na
     Task 3): mesmo um id inexistente deve ser barrado pelo login ANTES de a

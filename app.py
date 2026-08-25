@@ -19,6 +19,7 @@ definidas no host — ver a seção "Deploy" do README.
 from __future__ import annotations
 
 import copy
+import io
 import ipaddress
 import json
 import os
@@ -33,6 +34,8 @@ import urllib.parse
 import urllib.request
 import uuid
 import webbrowser
+import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from flask import (Flask, Response, jsonify, redirect, request,
@@ -42,6 +45,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 
 import auditar_relatorio as core
+import relatorio_pdf
 
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
@@ -100,9 +104,11 @@ def _coletar(token: str, alvo: str, progresso=None):
         info = {"modo": "obra", "titulo": ctx.get("nome", obra_id),
                 "subtitulo": "Obra completa (todas as tarefas)",
                 "total": len(fotos), "grupos": ctx.get("grupos", 0),
-                "nome_arquivo": core._sanitizar_pasta(f"obra {ctx.get('nome', obra_id)}")}
+                "nome_arquivo": core._sanitizar_pasta(f"obra {ctx.get('nome', obra_id)}"),
+                "cabecalho": ctx.get("cabecalho") or {},
+                "atividades": ctx.get("atividades") or []}
     else:
-        mapa = core.montar_mapa_tarefas(client, obra_id)
+        mapa, _atividades = core.montar_mapa_tarefas(client, obra_id)
         fotos, rel = core.coletar_fotos(client, obra_id, rel_id, mapa)
         info = {"modo": "relatorio",
                 "titulo": f"Relatório nº {rel.get('numero', '?')}",
@@ -437,8 +443,16 @@ def api_processar():
                 "divergente": sum(1 for f in fotos if f.veredito == "DIVERGENTE"),
                 "inconclusivo": sum(1 for f in fotos if f.veredito == "INCONCLUSIVO"),
             }
+            fotos_meta = [
+                {"codigo": f.codigo, "descricao": core._descricao_curta(f.descricao),
+                 "subpasta": f.subpasta, "grupo_desc": f.grupo_desc,
+                 "nome_arquivo": f.nome_arquivo}
+                for f in fotos if f.caminho and f.caminho.exists()
+            ]
             zid = _zipar_diretorio(pasta_temp, info["nome_arquivo"])
             pasta_temp = None  # já foi removida por _zipar_diretorio
+            _zips[zid]["info"] = info
+            _zips[zid]["fotos_meta"] = fotos_meta
             yield evento({"tipo": "fim", "zip_id": zid, "resumo": resumo})
         except core.AppError as e:
             yield evento({"tipo": "erro", "msg": str(e)})
@@ -460,6 +474,78 @@ def api_zip(zid):
         return "Arquivo não encontrado (pode ter expirado).", 404
     return send_file(str(info["caminho"]), as_attachment=True,
                      download_name=info["nome"])
+
+
+def _montar_grupos_fotos(caminho_zip: Path, fotos_meta: list[dict]) -> list[dict]:
+    """Reagrupa as fotos já baixadas (guardadas no zip) por grupo/tarefa,
+    lendo os bytes de cada uma direto do zip (sem rebaixar nada)."""
+    grupos: dict[str, dict] = {}
+    ordem: list[str] = []
+    with zipfile.ZipFile(caminho_zip) as zf:
+        for m in fotos_meta:
+            chave = m["subpasta"] or "sem_grupo"
+            if chave not in grupos:
+                grupos[chave] = {"letra": chave, "desc": m.get("grupo_desc", ""),
+                                 "tarefas": {}}
+                ordem.append(chave)
+            tarefas = grupos[chave]["tarefas"]
+            cod = m["codigo"]
+            if cod not in tarefas:
+                tarefas[cod] = {"codigo": f"{chave.upper()}{cod}",
+                                "descricao": m["descricao"], "fotos": []}
+            caminho_interno = (f"{m['subpasta']}/{m['nome_arquivo']}"
+                               if m["subpasta"] else m["nome_arquivo"])
+            try:
+                dados = zf.read(caminho_interno)
+            except KeyError:
+                dados = None
+            tarefas[cod]["fotos"].append(dados)
+    return [{"letra": grupos[k]["letra"], "desc": grupos[k]["desc"],
+            "tarefas": list(grupos[k]["tarefas"].values())} for k in ordem]
+
+
+@app.route("/api/pdf/<zid>")
+def api_pdf(zid):
+    entry = _zips.get(zid)
+    if not entry or not Path(entry["caminho"]).exists():
+        return "Arquivo não encontrado (pode ter expirado).", 404
+
+    info = entry.get("info") or {}
+    if info.get("modo") != "obra":
+        return ("Relatório em PDF disponível só para o modo \"obra completa\" "
+                "por enquanto.", 400)
+
+    cabecalho = info.get("cabecalho") or {}
+    atividades = info.get("atividades") or []
+    fotos_meta = entry.get("fotos_meta") or []
+
+    imagem_obra = None
+    foto_url = cabecalho.get("fotoUrl")
+    if foto_url and _url_de_imagem_segura(foto_url):
+        try:
+            req = urllib.request.Request(foto_url, headers={"User-Agent": "auditor-rdo/1.0"})
+            with urllib.request.urlopen(req, timeout=15, context=core.SSL_CONTEXT) as resp:
+                imagem_obra = resp.read()
+        except Exception:  # noqa: BLE001 — imagem da obra é só um extra; segue sem ela
+            imagem_obra = None
+
+    try:
+        grupos_fotos = _montar_grupos_fotos(Path(entry["caminho"]), fotos_meta)
+        resumo = {
+            "tarefas": len({(m["subpasta"], m["codigo"]) for m in fotos_meta}),
+            "fotos": len(fotos_meta),
+            "grupos": len({m["subpasta"] for m in fotos_meta}),
+        }
+        gerado_em = datetime.now().strftime("%d/%m/%Y %H:%M")
+        pdf_bytes = relatorio_pdf.gerar_pdf(cabecalho, atividades, resumo,
+                                            grupos_fotos, gerado_em,
+                                            imagem_obra=imagem_obra)
+    except Exception as e:  # noqa: BLE001
+        return f"Erro ao gerar o PDF: {e}", 500
+
+    nome_pdf = info.get("nome_arquivo", entry["nome"].rsplit(".", 1)[0]) + ".pdf"
+    return send_file(io.BytesIO(pdf_bytes), as_attachment=True,
+                     download_name=nome_pdf, mimetype="application/pdf")
 
 
 def _abrir_navegador(url: str) -> None:

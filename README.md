@@ -36,6 +36,8 @@ Há **duas formas de usar**: a **interface web** (recomendada, com galeria de fo
 
 O token fica salvo só no seu navegador (nunca no servidor), e ao final as fotos + auditoria.csv são entregues como um .zip para download. A auditoria por IA é um botão opcional na própria tela.
 
+Quando o modo é "obra completa" (URL de lista de tarefas), também fica disponível o botão **Baixar relatório PDF**: um RDO com o mesmo conteúdo do relatório oficial do Diário de Obra (cabeçalho da obra, tabela de atividades e galeria de fotos), com um visual mais profissional — gerado com [ReportLab](https://www.reportlab.com/), sem depender de nenhuma ferramenta externa.
+
 ## Instalação
 
 Para o uso padrão (baixar + nomear) **não é preciso instalar nada** além do Python — as chamadas à API do Diário de Obra e os downloads usam a biblioteca padrão.
