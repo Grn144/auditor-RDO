@@ -12,13 +12,14 @@ import io
 from pathlib import Path
 from typing import Optional
 
+from PIL import Image as PILImage
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import (
-    BaseDocTemplate, Frame, Image, KeepTogether, PageTemplate,
+    BaseDocTemplate, Flowable, Frame, Image, KeepTogether, PageTemplate,
     Paragraph, Spacer, Table, TableStyle,
 )
 
@@ -34,6 +35,7 @@ FUNDO_CLARO = colors.HexColor("#f4f6f9")
 
 LOGO_PATH = Path(__file__).parent / "static" / "officez_logo.png"
 MARGEM = 18 * mm
+SELO_LARGURA = 34 * mm  # selo de status na tabela de atividades ("Concluída · 100%")
 
 _styles = getSampleStyleSheet()
 ESTILO_LABEL = ParagraphStyle(
@@ -63,6 +65,9 @@ ESTILO_QTD = ParagraphStyle(
 ESTILO_LEGENDA = ParagraphStyle(
     "Legenda", parent=_styles["Normal"], fontSize=8, textColor=MUTED,
     leading=10.5)
+ESTILO_CARD_TITULO = ParagraphStyle(
+    "CardTitulo", parent=_styles["Normal"], fontSize=8.8, textColor=TEXTO,
+    fontName="Helvetica-Bold", leading=11.5)
 ESTILO_LEGENDA_COD = ParagraphStyle(
     "LegendaCod", parent=_styles["Normal"], fontSize=8,
     textColor=TEXTO, fontName="Helvetica-Bold", leading=10.5)
@@ -260,7 +265,10 @@ def _bloco_atividades(atividades: list[dict]) -> list:
                                            fontSize=8, textColor=cor_txt,
                                            fontName="Helvetica-Bold",
                                            alignment=1))]],
-                colWidths=[38 * mm])
+                # Largura EXATA da coluna externa (SELO_LARGURA) — a coluna
+                # externa tem padding zerado (ver estilos abaixo) pra não
+                # somar duas larguras e estourar o selo pra fora da tabela.
+                colWidths=[SELO_LARGURA])
             selo.setStyle(TableStyle([
                 ("BACKGROUND", (0, 0), (-1, -1), cor_fundo),
                 ("TOPPADDING", (0, 0), (-1, -1), 1.5 * mm),
@@ -275,14 +283,19 @@ def _bloco_atividades(atividades: list[dict]) -> list:
             ])
             cor_linha = colors.white if i % 2 else FUNDO_CLARO
             estilos.append(("BACKGROUND", (0, i), (-1, i), cor_linha))
-        tabela = Table(linhas, colWidths=[largura_util - 38 * mm - 28 * mm,
-                                          28 * mm, 38 * mm])
+        tabela = Table(linhas, colWidths=[largura_util - SELO_LARGURA - 28 * mm,
+                                          28 * mm, SELO_LARGURA])
         estilos += [
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("LEFTPADDING", (0, 1), (-1, -1), 4 * mm),
             ("RIGHTPADDING", (0, 1), (-1, -1), 2 * mm),
             ("TOPPADDING", (0, 1), (-1, -1), 2.5 * mm),
             ("BOTTOMPADDING", (0, 1), (-1, -1), 2.5 * mm),
+            # a coluna do selo (2) não pode ter padding extra aqui: o selo
+            # já é uma Table com a largura EXATA da coluna, então qualquer
+            # padding somado empurra o conteúdo pra fora da tabela.
+            ("LEFTPADDING", (2, 1), (2, -1), 0),
+            ("RIGHTPADDING", (2, 1), (2, -1), 0),
             ("BOX", (0, 0), (-1, -1), 0.5, BORDA),
             ("LINEBELOW", (0, 1), (-1, -2), 0.4, BORDA),
         ]
@@ -292,26 +305,128 @@ def _bloco_atividades(atividades: list[dict]) -> list:
     return elementos
 
 
-def _caixa_foto(dados_img: Optional[bytes], legenda: str,
-                largura_caixa: float, altura_caixa: float):
-    celula = []
-    if dados_img:
-        try:
-            leitor = ImageReader(io.BytesIO(dados_img))
-            nl, na = leitor.getSize()
-            escala = min(largura_caixa / nl, altura_caixa / na)
-            w, h = nl * escala, na * escala
-            img = Image(io.BytesIO(dados_img), width=w, height=h)
-            img.hAlign = "CENTER"
-            celula.append(img)
-        except Exception:  # noqa: BLE001 — imagem corrompida/formato inválido
-            celula.append(Paragraph("(foto indisponível)", ESTILO_LEGENDA))
+def _cortar_para_preencher(dados_img: bytes, aspecto: float) -> bytes:
+    """Corta a imagem pelo centro pra preencher exatamente a proporção
+    largura/altura pedida, sem distorcer (equivalente a object-fit: cover
+    em CSS) — o excesso é cortado, nunca esticado."""
+    im = PILImage.open(io.BytesIO(dados_img)).convert("RGB")
+    w, h = im.size
+    atual = w / h
+    if atual > aspecto:
+        nova_w = max(1, round(h * aspecto))
+        x0 = (w - nova_w) // 2
+        im = im.crop((x0, 0, x0 + nova_w, h))
     else:
-        celula.append(Spacer(1, altura_caixa))
-        celula.append(Paragraph("(foto indisponível)", ESTILO_LEGENDA))
-    celula.append(Spacer(1, 2 * mm))
-    celula.append(Paragraph(legenda, ESTILO_LEGENDA))
-    return celula
+        nova_h = max(1, round(w / aspecto))
+        y0 = (h - nova_h) // 2
+        im = im.crop((0, y0, w, y0 + nova_h))
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
+class _CardFoto(Flowable):
+    """Card de foto: imagem cortada (cover) com cantos arredondados,
+    etiqueta de identificação sobre a imagem ("D3 • Foto 01") e a
+    descrição da tarefa abaixo. É um único Flowable — o ReportLab nunca
+    quebra um Flowable no meio entre duas páginas, então o card nunca
+    fica com a imagem numa página e o texto na seguinte (equivalente a
+    break-inside: avoid em CSS)."""
+
+    RAIO = 5
+    PAD_TEXTO = 3.2 * mm
+    COR_ETIQUETA = colors.Color(0.06, 0.09, 0.16, alpha=0.72)
+    COR_SOMBRA = colors.Color(0.06, 0.09, 0.16, alpha=0.08)
+
+    def __init__(self, dados_img: Optional[bytes], rotulo_id: str,
+                titulo: str, largura: float, altura_imagem: float):
+        super().__init__()
+        self.dados_img = dados_img
+        self.rotulo_id = rotulo_id
+        self.largura = largura
+        self.altura_imagem = altura_imagem
+        largura_texto = largura - 2 * self.PAD_TEXTO
+        self._paragrafo = Paragraph(titulo or "—", ESTILO_CARD_TITULO)
+        _, altura_paragrafo = self._paragrafo.wrap(largura_texto, 999 * mm)
+        self.altura_texto = altura_paragrafo + 2 * self.PAD_TEXTO
+        self._largura_texto = largura_texto
+
+    def wrap(self, avail_w, avail_h):
+        return (self.largura, self.altura_imagem + self.altura_texto)
+
+    def draw(self):
+        c = self.canv
+        w = self.largura
+        h = self.altura_imagem + self.altura_texto
+
+        c.saveState()
+        c.setFillColor(self.COR_SOMBRA)
+        c.roundRect(0.5, -0.5, w, h, self.RAIO, fill=1, stroke=0)
+        c.restoreState()
+
+        c.saveState()
+        caminho = c.beginPath()
+        caminho.roundRect(0, 0, w, h, self.RAIO)
+        c.clipPath(caminho, stroke=0, fill=0)
+        c.setFillColor(colors.white)
+        c.rect(0, 0, w, h, fill=1, stroke=0)
+        self._desenhar_imagem(c, w, h)
+        c.restoreState()
+
+        c.saveState()
+        c.setStrokeColor(BORDA)
+        c.setLineWidth(0.75)
+        c.roundRect(0.4, 0.4, w - 0.8, h - 0.8, self.RAIO, fill=0, stroke=1)
+        c.restoreState()
+
+        self._desenhar_etiqueta(c, h)
+        self._paragrafo.drawOn(c, self.PAD_TEXTO, self.PAD_TEXTO)
+
+    def _desenhar_imagem(self, c, w, h):
+        y_img = h - self.altura_imagem
+        if self.dados_img:
+            try:
+                cortada = _cortar_para_preencher(self.dados_img, w / self.altura_imagem)
+                c.drawImage(ImageReader(io.BytesIO(cortada)), 0, y_img,
+                           width=w, height=self.altura_imagem, mask="auto")
+                return
+            except Exception:  # noqa: BLE001 — imagem corrompida/formato inválido
+                pass
+        c.setFillColor(FUNDO_CLARO)
+        c.rect(0, y_img, w, self.altura_imagem, fill=1, stroke=0)
+        c.setFillColor(MUTED)
+        c.setFont("Helvetica", 8)
+        c.drawCentredString(w / 2, y_img + self.altura_imagem / 2, "(foto indisponível)")
+
+    def _desenhar_etiqueta(self, c, h):
+        c.saveState()
+        fonte, tam = "Helvetica-Bold", 6.6
+        pad_h, pad_v = 2.2 * mm, 1.3 * mm
+        largura_etq = c.stringWidth(self.rotulo_id, fonte, tam) + 2 * pad_h
+        altura_etq = tam + 2 * pad_v
+        x, y = 2.5 * mm, h - 2.5 * mm - altura_etq
+        c.setFillColor(self.COR_ETIQUETA)
+        c.roundRect(x, y, largura_etq, altura_etq, 2, fill=1, stroke=0)
+        c.setFillColor(colors.white)
+        c.setFont(fonte, tam)
+        c.drawString(x + pad_h, y + pad_v, self.rotulo_id)
+        c.restoreState()
+
+
+def _linha_de_cards(cards: list, largura_util: float) -> Table:
+    if len(cards) == 1:
+        cards = [cards[0], ""]
+    linha = Table([cards], colWidths=[largura_util / 2] * 2)
+    linha.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (0, 0), 0),
+        ("RIGHTPADDING", (0, 0), (0, 0), 3 * mm),
+        ("LEFTPADDING", (1, 0), (1, 0), 3 * mm),
+        ("RIGHTPADDING", (1, 0), (1, 0), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5 * mm),
+    ]))
+    return linha
 
 
 def _bloco_fotos(grupos_fotos: list[dict]) -> list:
@@ -319,8 +434,8 @@ def _bloco_fotos(grupos_fotos: list[dict]) -> list:
     fotos: [bytes|None, ...]}]} — já vem organizada nessa ordem."""
     elementos = [Paragraph("FOTOS", ESTILO_SUPRA), Spacer(1, 2 * mm)]
     largura_util = A4[0] - 2 * MARGEM
-    largura_caixa = largura_util / 2 - 6 * mm
-    altura_caixa = 55 * mm
+    largura_card = largura_util / 2 - 3 * mm
+    altura_imagem = 50 * mm
 
     for grupo in grupos_fotos:
         titulo = f"{grupo['letra']} — {grupo['desc']}" if grupo["desc"] else grupo["letra"]
@@ -333,28 +448,22 @@ def _bloco_fotos(grupos_fotos: list[dict]) -> list:
             ("LEFTPADDING", (0, 0), (-1, -1), 4 * mm),
         ]))
         elementos.append(cabecalho_grupo)
-        elementos.append(Spacer(1, 3 * mm))
+        elementos.append(Spacer(1, 4 * mm))
 
+        cards_linha: list = []
         for tarefa in grupo["tarefas"]:
-            legenda_base = f"{tarefa['codigo']} — {tarefa['descricao']}"
             fotos = tarefa["fotos"] or [None]
-            for i in range(0, len(fotos), 2):
-                par = fotos[i:i + 2]
-                linha = []
-                for dados_img in par:
-                    linha.append(_caixa_foto(dados_img, legenda_base,
-                                             largura_caixa, altura_caixa))
-                if len(linha) == 1:
-                    linha.append("")
-                tabela = Table([linha], colWidths=[largura_util / 2] * 2)
-                tabela.setStyle(TableStyle([
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 0),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 6 * mm),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5 * mm),
-                ]))
-                elementos.append(tabela)
-        elementos.append(Spacer(1, 3 * mm))
+            for n, dados_img in enumerate(fotos, start=1):
+                rotulo_id = f"{tarefa['codigo']} • Foto {n:02d}"
+                cards_linha.append(_CardFoto(dados_img, rotulo_id,
+                                             tarefa["descricao"],
+                                             largura_card, altura_imagem))
+                if len(cards_linha) == 2:
+                    elementos.append(_linha_de_cards(cards_linha, largura_util))
+                    cards_linha = []
+        if cards_linha:
+            elementos.append(_linha_de_cards(cards_linha, largura_util))
+        elementos.append(Spacer(1, 2 * mm))
     return elementos
 
 
