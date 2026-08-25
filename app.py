@@ -28,10 +28,12 @@ from pathlib import Path
 from flask import (Flask, Response, jsonify, redirect, request,
                    render_template, send_file, session,
                    stream_with_context, url_for)
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import auditar_relatorio as core
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)

@@ -62,3 +62,27 @@ def test_bloqueia_apos_muitas_tentativas_erradas(app_module):
         cliente.post("/login", data={"senha": "errada"})
     resp = cliente.post("/login", data={"senha": "segredo123"})
     assert "aguarde" in resp.get_data(as_text=True).lower()
+
+
+def test_rate_limit_por_ip_via_x_forwarded_for(app_module):
+    """Verifica que rate limiting utiliza corretamente X-Forwarded-For
+    (via ProxyFix) para identificar IPs distintos atrás de um proxy."""
+    mod = app_module(app_password="segredo123")
+    cliente = mod.app.test_client()
+
+    # IP A (1.2.3.4): tenta _LOGIN_MAX_TENTATIVAS vezes com senha errada
+    for _ in range(mod._LOGIN_MAX_TENTATIVAS):
+        cliente.post("/login", data={"senha": "errada"},
+                    headers={"X-Forwarded-For": "1.2.3.4"})
+
+    # IP A agora deve estar bloqueado
+    resp_a_bloqueado = cliente.post("/login", data={"senha": "segredo123"},
+                                   headers={"X-Forwarded-For": "1.2.3.4"})
+    assert "aguarde" in resp_a_bloqueado.get_data(as_text=True).lower()
+
+    # IP B (5.6.7.8): deve ainda ter tentativas disponíveis
+    resp_b_nao_bloqueado = cliente.post("/login", data={"senha": "errada"},
+                                       headers={"X-Forwarded-For": "5.6.7.8"})
+    # Não deve conter "aguarde" (não está bloqueado), mas conterá "incorreta"
+    assert "aguarde" not in resp_b_nao_bloqueado.get_data(as_text=True).lower()
+    assert "incorreta" in resp_b_nao_bloqueado.get_data(as_text=True).lower()
