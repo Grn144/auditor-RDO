@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-Interface web local para o Auditor de Relatórios - Diário de Obra.
+Interface web para o Auditor de Relatórios - Diário de Obra.
 
-Um pequeno servidor Flask que reaproveita a lógica de `auditar_relatorio.py`
-e serve uma interface no navegador. Roda 100% na sua máquina: o token não
-sai do seu computador e as fotos são salvas na sua pasta Downloads.
+Um servidor Flask que reaproveita a lógica de `auditar_relatorio.py` e serve
+uma interface no navegador. Cada pessoa cola seu próprio token (fica salvo
+só no navegador dela, nunca no servidor); ao final do processamento, as
+fotos + o auditoria.csv são baixados como um .zip.
 
-Uso:
+Uso local:
     python app.py
-    (o navegador abre sozinho em http://127.0.0.1:5000)
+    (o navegador abre sozinho em http://127.0.0.1:5000, sem login)
+
+Uso hospedado (ex.: Render): rodar via `gunicorn app:app --workers 1`, com
+as variáveis de ambiente APP_PASSWORD e SECRET_KEY definidas no host — ver
+a seção "Deploy" do README.
 """
 
 from __future__ import annotations
@@ -361,11 +366,14 @@ def _abrir_navegador(url: str) -> None:
 
 
 if __name__ == "__main__":
-    porta = 5000
-    url = f"http://127.0.0.1:{porta}"
-    print(f"\n  Auditor RDO rodando em {url}")
-    print("  (feche esta janela para encerrar o aplicativo)\n")
-    _abrir_navegador(url)
+    porta = int(os.environ.get("PORT", 5000))
+    local = "PORT" not in os.environ
+    host = "127.0.0.1" if local else "0.0.0.0"
+    if local:
+        url = f"http://127.0.0.1:{porta}"
+        print(f"\n  Auditor RDO rodando em {url}")
+        print("  (feche esta janela para encerrar o aplicativo)\n")
+        _abrir_navegador(url)
     # threaded=True: atende várias requisições ao mesmo tempo (miniaturas +
     # coleta longa da obra), evitando "Failed to fetch" quando uma demora.
-    app.run(host="127.0.0.1", port=porta, debug=False, threaded=True)
+    app.run(host=host, port=porta, debug=False, threaded=True)

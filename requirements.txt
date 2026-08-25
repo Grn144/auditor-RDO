@@ -18,3 +18,7 @@ anthropic>=1.0.0
 
 # Só para rodar os testes (pytest tests/) - não precisa em produção nem para uso local normal.
 pytest>=8.0.0
+
+# Só necessário para hospedar (Render/produção) - o app local usa o servidor
+# de desenvolvimento do Flask via `python app.py` e não precisa disso.
+gunicorn>=22.0.0

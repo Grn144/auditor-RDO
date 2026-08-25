@@ -120,27 +120,47 @@ python auditar_relatorio.py <obra_id> <relatorio_id> --modelo claude-sonnet-5
 
 ## Segurança
 
-Este app roda **100% localmente** (`127.0.0.1`, sem acesso pela rede) e é de uso
-individual. Por isso, boa parte de um checklist de segurança genérico para
-aplicações web não se aplica aqui:
+Rodando localmente (`python app.py`, sem `APP_PASSWORD` definida), o app é
+100% pessoal: escuta só em `127.0.0.1`, sem login, sem exposição de rede.
+Boa parte de um checklist de segurança genérico para aplicações web não se
+aplica a esse modo — sem banco de dados (não há RLS, criptografia de dados
+em banco, mass assignment ou queries SQL para parametrizar) e sem contas
+individuais por pessoa (não há senha por usuário para fazer hash).
 
-- **Sem banco de dados** → não há RLS, criptografia de dados em banco, mass
-  assignment ou queries SQL para parametrizar.
-- **Sem sistema de login/usuários** → não há senha para fazer hash, nem
-  sessão/cookie para proteger.
-- **Servidor não exposto na internet** → rate limit, bot protection e HTTPS
-  forçado não fazem sentido para um processo que só escuta em `127.0.0.1`.
+Rodando hospedado (Render, com `APP_PASSWORD` definida — ver "Deploy"
+abaixo), uma tela de login protege o app, com bloqueio por tentativas
+erradas repetidas (rate limit simples). Em ambos os casos:
 
-O que **é** relevante e já está tratado:
+- O token de cada pessoa nunca é salvo no servidor — fica só no
+  `localStorage` do navegador dela (veja "esquecer token salvo" na tela).
+- O proxy de imagens (`/api/img`) valida a entrada: só aceita URLs `https`
+  que não apontem para IPs internos/privados (evita SSRF).
+- As fotos processadas e o `auditoria.csv` são entregues como um `.zip`
+  baixado pelo navegador — nenhum arquivo fica salvo em disco além de um
+  diretório temporário por requisição, removido logo após gerar o zip.
+- Antes de publicar este projeto (ou uma nova versão) em um repositório
+  Git, rode `pip-audit -r requirements.txt` (ou equivalente) para checar
+  dependências com vulnerabilidades conhecidas.
 
-- O token do Diário de Obra (e a chave da Groq, se configurada) ficam em
-  `config.json`, salvo **apenas na sua máquina**. Esse arquivo está no
-  `.gitignore` — **nunca o adicione a um commit**.
-- O proxy de imagens (`/api/img`) e os endpoints de arquivo
-  (`/api/abrir-pasta`, `/api/csv`) validam a entrada: só aceitam URLs
-  `https` que não apontem para IPs internos/privados, e só servem caminhos
-  dentro da sua pasta `Downloads`.
-- Antes de publicar este projeto em um repositório Git, rode
-  `pip-audit -r requirements.txt` (ou equivalente) para checar dependências
-  com vulnerabilidades conhecidas, e confira que `config.json` não está
-  rastreado (`git status` não deve listá-lo).
+## Deploy (Render.com)
+
+1. Suba este repositório no GitHub (se ainda não estiver).
+2. Em [render.com](https://render.com), crie um **Web Service** novo,
+   conectado a este repositório.
+3. Configuração do serviço:
+   - **Build command:** `pip install -r requirements.txt`
+   - **Start command:** deixe em branco (o Render lê o `Procfile`
+     automaticamente) ou use `gunicorn app:app --workers 1 --threads 4`.
+4. Em **Environment**, adicione as variáveis:
+   - `APP_PASSWORD` — a senha que a equipe vai usar para entrar no app.
+   - `SECRET_KEY` — qualquer string longa e aleatória (ex.: gerada com
+     `python -c "import secrets; print(secrets.token_hex(32))"`).
+5. Deploy. O Render expõe uma URL `https://` própria — HTTPS já vem pronto.
+6. Compartilhe a URL e a senha com a equipe. Cada pessoa cola seu próprio
+   token do Diário de Obra (e sua própria chave de IA, se for usar
+   auditoria) — nada disso fica salvo no servidor.
+
+**Importante:** o serviço precisa rodar com um único worker
+(`--workers 1`, já configurado no `Procfile`) — o cache de relatórios, o
+controle de tentativas de login e os zips prontos para download vivem em
+memória, e workers diferentes não veem a memória um do outro.
