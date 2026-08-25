@@ -338,3 +338,35 @@ def test_carregar_propaga_apperror_como_evento_de_erro(app_module, monkeypatch):
     linhas = [json.loads(l) for l in resp.get_data(as_text=True).splitlines() if l.strip()]
     assert linhas[-1]["tipo"] == "erro"
     assert "não encontrado" in linhas[-1]["msg"]
+
+
+def test_logout_limpa_sessao_e_exige_login_de_novo(app_module):
+    mod = app_module(usuarios={"joao": "segredo123"})
+    cliente = mod.app.test_client()
+    cliente.post("/login", data={"usuario": "joao", "senha": "segredo123"})
+    assert cliente.get("/").status_code == 200  # autenticado
+
+    resp = cliente.get("/logout", follow_redirects=False)
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+    resp2 = cliente.get("/", follow_redirects=False)
+    assert resp2.status_code == 302  # sessão foi limpa, exige login de novo
+    assert "/login" in resp2.headers["Location"]
+
+
+def test_pagina_principal_mostra_usuario_logado(app_module):
+    mod = app_module(usuarios={"joao": "segredo123"})
+    cliente = mod.app.test_client()
+    cliente.post("/login", data={"usuario": "joao", "senha": "segredo123"})
+    resp = cliente.get("/")
+    assert "joao" in resp.get_data(as_text=True)
+
+
+def test_pagina_principal_sem_login_nao_mostra_botao_de_sair(app_module):
+    """Sem APP_USERS configurada (uso local), não existe sessão/usuário —
+    o botão de sair não deve aparecer (não há nada de onde sair)."""
+    mod = app_module(usuarios=None)
+    cliente = mod.app.test_client()
+    resp = cliente.get("/")
+    assert "btnSair" not in resp.get_data(as_text=True)

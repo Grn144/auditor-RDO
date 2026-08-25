@@ -267,9 +267,15 @@ def login():
     return render_template("login.html", erro=erro)
 
 
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", usuario=session.get("usuario"))
 
 
 @app.route("/api/carregar", methods=["POST"])
