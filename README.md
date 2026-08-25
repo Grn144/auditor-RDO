@@ -33,7 +33,7 @@ Há **duas formas de usar**: a **interface web** (recomendada, com galeria de fo
 3. O navegador abre sozinho em `http://127.0.0.1:5000`.
 4. Cole o **token** e a **URL do relatório**, clique em **Carregar relatório**, confira a galeria e clique em **Baixar fotos**.
 
-Tudo roda localmente no seu PC: o token não sai da máquina e as fotos vão para a sua pasta Downloads. A auditoria por IA é um botão opcional na própria tela.
+O token fica salvo só no seu navegador (nunca no servidor), e ao final as fotos + auditoria.csv são entregues como um .zip para download. A auditoria por IA é um botão opcional na própria tela.
 
 ## Instalação
 
