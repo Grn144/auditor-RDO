@@ -56,6 +56,8 @@ _LOGIN_JANELA = 15 * 60  # 15 minutos
 _LOGIN_MAX_TENTATIVAS = 10
 _login_tentativas: dict[str, list[float]] = {}
 
+_SESSAO_TIMEOUT = 30 * 60  # 30 minutos de inatividade
+
 
 def _registrar_tentativa_falha(ip: str) -> None:
     agora = time.time()
@@ -207,8 +209,14 @@ def _adicionar_cabecalhos_seguranca(resp: Response) -> Response:
 def _exigir_login():
     if not APP_PASSWORD:
         return None
-    if request.endpoint in ("login", "static") or session.get("autenticado"):
+    if request.endpoint in ("login", "static"):
         return None
+    ultimo_acesso = session.get("ultimo_acesso")
+    if session.get("autenticado") and ultimo_acesso is not None \
+            and time.time() - ultimo_acesso < _SESSAO_TIMEOUT:
+        session["ultimo_acesso"] = time.time()  # renova (sliding window)
+        return None
+    session.clear()
     return redirect(url_for("login"))
 
 
@@ -221,6 +229,7 @@ def login():
             erro = "Muitas tentativas erradas. Aguarde alguns minutos."
         elif secrets.compare_digest(request.form.get("senha", ""), APP_PASSWORD or ""):
             session["autenticado"] = True
+            session["ultimo_acesso"] = time.time()
             _login_tentativas.pop(ip, None)
             return redirect(url_for("index"))
         else:

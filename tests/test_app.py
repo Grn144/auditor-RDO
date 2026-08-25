@@ -46,6 +46,50 @@ def test_login_com_senha_certa_libera_acesso(app_module):
     assert resp2.status_code == 200
 
 
+def test_cookie_de_sessao_morre_ao_fechar_o_navegador(app_module):
+    """O cookie não pode ter Max-Age/Expires: precisa ser um cookie de
+    sessão de verdade, que o navegador descarta ao fechar (não só a aba,
+    o navegador inteiro) — a expiração por inatividade é controlada à
+    parte, via timestamp guardado na própria sessão."""
+    mod = app_module(app_password="segredo123")
+    cliente = mod.app.test_client()
+    resp = cliente.post("/login", data={"senha": "segredo123"})
+    cookie_sessao = next(c for c in resp.headers.getlist("Set-Cookie")
+                          if c.startswith("session="))
+    assert "Max-Age" not in cookie_sessao
+    assert "Expires" not in cookie_sessao
+
+
+def test_sessao_expira_apos_30_minutos_de_inatividade(app_module, monkeypatch):
+    mod = app_module(app_password="segredo123")
+    cliente = mod.app.test_client()
+    cliente.post("/login", data={"senha": "segredo123"})
+    assert cliente.get("/").status_code == 200  # autenticado logo após o login
+
+    agora = time.time()
+    monkeypatch.setattr(mod.time, "time", lambda: agora + mod._SESSAO_TIMEOUT + 1)
+    resp = cliente.get("/", follow_redirects=False)
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+
+def test_atividade_renova_a_sessao_antes_do_timeout(app_module, monkeypatch):
+    mod = app_module(app_password="segredo123")
+    cliente = mod.app.test_client()
+    cliente.post("/login", data={"senha": "segredo123"})
+
+    agora = time.time()
+    # 20 min depois (dentro dos 30 min) — deve continuar autenticado e
+    # renovar o timestamp.
+    monkeypatch.setattr(mod.time, "time", lambda: agora + 20 * 60)
+    assert cliente.get("/").status_code == 200
+
+    # Mais 20 min a partir da última atividade (não do login original) —
+    # ainda dentro dos 30 min de inatividade porque a atividade renovou.
+    monkeypatch.setattr(mod.time, "time", lambda: agora + 40 * 60)
+    assert cliente.get("/").status_code == 200
+
+
 def test_login_com_senha_errada_nao_libera(app_module):
     mod = app_module(app_password="segredo123")
     cliente = mod.app.test_client()

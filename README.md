@@ -130,7 +130,9 @@ individuais por pessoa (não há senha por usuário para fazer hash).
 
 Rodando hospedado (Render, com `APP_PASSWORD` definida — ver "Deploy"
 abaixo), uma tela de login protege o app, com bloqueio por tentativas
-erradas repetidas (rate limit simples). Em ambos os casos:
+erradas repetidas (rate limit simples). A sessão expira automaticamente
+após 30 minutos sem uso (pedindo a senha de novo) e também não sobrevive
+a fechar o navegador — não é um cookie "lembrar de mim". Em ambos os casos:
 
 - O token de cada pessoa nunca é salvo no servidor — fica só no
   `localStorage` do navegador dela (veja "esquecer token salvo" na tela).
