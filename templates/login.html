@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entrar — Auditor RDO</title>
+<style>
+  body{margin:0;min-height:100vh;display:grid;place-items:center;
+    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
+    background:#f4f6f9;color:#1a2230}
+  .card{background:#fff;border:1px solid #dce3ec;border-radius:14px;
+    box-shadow:0 1px 3px rgba(16,24,40,.08),0 8px 24px rgba(16,24,40,.06);
+    padding:28px;width:320px}
+  h1{font-size:18px;margin:0 0 18px}
+  input{width:100%;padding:11px 13px;font-size:14px;background:#eef2f7;
+    border:1px solid #dce3ec;border-radius:10px;color:#1a2230;margin-bottom:14px;box-sizing:border-box}
+  button{width:100%;padding:12px;font-size:14px;font-weight:650;border:none;
+    border-radius:10px;background:#1f6feb;color:#fff;cursor:pointer}
+  .erro{background:#fee2e2;color:#b91c1c;border-radius:8px;padding:9px 12px;
+    font-size:13px;margin-bottom:14px}
+</style>
+</head>
+<body>
+  <form class="card" method="post">
+    <h1>🏗️ Auditor RDO</h1>
+    {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
+    <input type="password" name="senha" placeholder="Senha da equipe" autofocus required>
+    <button type="submit">Entrar</button>
+  </form>
+</body>
+</html>

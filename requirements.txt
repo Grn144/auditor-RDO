@@ -15,3 +15,6 @@ pillow>=10.0.0       # redimensiona as fotos antes de enviar à IA
 anthropic>=1.0.0
 
 # Obs.: a auditoria por IA com Groq (gratuito) NÃO precisa de pacote extra — usa urllib.
+
+# Só para rodar os testes (pytest tests/) - não precisa em produção nem para uso local normal.
+pytest>=8.0.0

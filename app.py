@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
+import secrets
 import socket
 import threading
 import time
@@ -23,12 +25,39 @@ import urllib.request
 import webbrowser
 from pathlib import Path
 
-from flask import (Flask, Response, jsonify, request,
-                   render_template, send_file, stream_with_context)
+from flask import (Flask, Response, jsonify, redirect, request,
+                   render_template, send_file, session,
+                   stream_with_context, url_for)
 
 import auditar_relatorio as core
 
 app = Flask(__name__)
+
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(APP_PASSWORD),
+)
+
+_LOGIN_JANELA = 15 * 60  # 15 minutos
+_LOGIN_MAX_TENTATIVAS = 10
+_login_tentativas: dict[str, list[float]] = {}
+
+
+def _registrar_tentativa_falha(ip: str) -> None:
+    agora = time.time()
+    tentativas = [t for t in _login_tentativas.get(ip, []) if agora - t < _LOGIN_JANELA]
+    tentativas.append(agora)
+    _login_tentativas[ip] = tentativas
+
+
+def _ip_bloqueado(ip: str) -> bool:
+    agora = time.time()
+    tentativas = [t for t in _login_tentativas.get(ip, []) if agora - t < _LOGIN_JANELA]
+    _login_tentativas[ip] = tentativas
+    return len(tentativas) >= _LOGIN_MAX_TENTATIVAS
 
 CONFIG_PATH = Path(__file__).with_name("config.json")
 
@@ -163,6 +192,31 @@ def _adicionar_cabecalhos_seguranca(resp: Response) -> Response:
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
     return resp
+
+
+@app.before_request
+def _exigir_login():
+    if not APP_PASSWORD:
+        return None
+    if request.endpoint in ("login", "static") or session.get("autenticado"):
+        return None
+    return redirect(url_for("login"))
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    erro = None
+    if request.method == "POST":
+        ip = request.remote_addr or "desconhecido"
+        if _ip_bloqueado(ip):
+            erro = "Muitas tentativas erradas. Aguarde alguns minutos."
+        elif request.form.get("senha") == APP_PASSWORD:
+            session["autenticado"] = True
+            return redirect(url_for("index"))
+        else:
+            _registrar_tentativa_falha(ip)
+            erro = "Senha incorreta."
+    return render_template("login.html", erro=erro)
 
 
 @app.route("/")
