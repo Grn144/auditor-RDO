@@ -1,5 +1,20 @@
 # Auditor de Relatórios — APP Diário de Obra
 
+## Sobre o projeto
+
+Em obras que usam o app **Diário de Obra** para registrar relatórios diários
+(RDO), cada tarefa do relatório vem com fotos anexadas que deveriam mostrar o
+serviço descrito sendo executado. Conferir isso manualmente — abrir cada
+relatório, baixar cada foto, comparar com a descrição da tarefa — é lento e
+repetitivo em obras com muitas tarefas e fotos.
+
+O **Auditor de Relatórios** automatiza essa conferência: dado um relatório
+(ou uma obra inteira), ele baixa e organiza as fotos por código de tarefa e,
+opcionalmente, usa um modelo de IA com visão para avaliar se cada foto é
+compatível com a descrição da atividade — sinalizando as que precisam de
+revisão manual. Roda inteiramente na sua máquina, sem enviar o token de
+acesso para nenhum servidor além da própria API do Diário de Obra.
+
 Ferramenta de linha de comando que, para um relatório do sistema **Diário de Obra**:
 
 1. **Baixa** todas as fotos do relatório para a pasta `Downloads`.
