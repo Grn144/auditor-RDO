@@ -18,6 +18,7 @@ a seção "Deploy" do README.
 
 from __future__ import annotations
 
+import copy
 import ipaddress
 import json
 import os
@@ -66,7 +67,10 @@ def _registrar_tentativa_falha(ip: str) -> None:
 def _ip_bloqueado(ip: str) -> bool:
     agora = time.time()
     tentativas = [t for t in _login_tentativas.get(ip, []) if agora - t < _LOGIN_JANELA]
-    _login_tentativas[ip] = tentativas
+    if tentativas:
+        _login_tentativas[ip] = tentativas
+    else:
+        _login_tentativas.pop(ip, None)
     return len(tentativas) >= _LOGIN_MAX_TENTATIVAS
 
 # Cache curto do resultado da coleta, para o "baixar" não refazer o trabalho
@@ -103,13 +107,21 @@ def _coletar(token: str, alvo: str, progresso=None):
 
 
 def _coletar_cacheado(token: str, alvo: str, progresso=None):
-    """Como _coletar, mas reaproveita um resultado recente do mesmo alvo."""
+    """Como _coletar, mas reaproveita um resultado recente do mesmo alvo.
+
+    Cada chamador recebe sua PRÓPRIA cópia da lista de `Foto` (deep-copy),
+    nunca os objetos originais guardados em `_CACHE`: `Foto` é um dataclass
+    mutável e `api_processar` escreve diretamente em `foto.caminho`,
+    `foto.veredito`, `foto.motivo` — sem a cópia, duas pessoas (ou duas
+    requisições concorrentes, com `--threads 4`) processando o mesmo
+    relatório dentro do TTL do cache compartilhariam e sobrescreveriam os
+    vereditos uma da outra."""
     chave = (alvo or "").strip()
     ent = _CACHE.get(chave)
     if ent and (time.time() - ent["ts"] < _CACHE_TTL):
-        return ent["fotos"], ent["info"]
+        return copy.deepcopy(ent["fotos"]), ent["info"]
     fotos, info = _coletar(token, alvo, progresso)
-    _CACHE[chave] = {"fotos": fotos, "info": info, "ts": time.time()}
+    _CACHE[chave] = {"fotos": copy.deepcopy(fotos), "info": info, "ts": time.time()}
     return fotos, info
 
 
@@ -207,8 +219,9 @@ def login():
         ip = request.remote_addr or "desconhecido"
         if _ip_bloqueado(ip):
             erro = "Muitas tentativas erradas. Aguarde alguns minutos."
-        elif request.form.get("senha") == APP_PASSWORD:
+        elif secrets.compare_digest(request.form.get("senha", ""), APP_PASSWORD or ""):
             session["autenticado"] = True
+            _login_tentativas.pop(ip, None)
             return redirect(url_for("index"))
         else:
             _registrar_tentativa_falha(ip)

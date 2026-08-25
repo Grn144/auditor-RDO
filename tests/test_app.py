@@ -131,6 +131,18 @@ def test_limpar_zips_antigos_remove_expirados(app_module, tmp_path):
     assert not arquivo_zip.exists()
 
 
+def test_zip_exige_login_quando_senha_configurada(app_module):
+    """Pina que o before_request cobre a rota /api/zip/<id> (adicionada na
+    Task 3): mesmo um id inexistente deve ser barrado pelo login ANTES de a
+    lógica da rota rodar, e não vazar um 404 "sem senha" para quem não
+    autenticou."""
+    mod = app_module(app_password="segredo123")
+    cliente = mod.app.test_client()
+    resp = cliente.get("/api/zip/nao-existe-e-nao-importa", follow_redirects=False)
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+
 def test_rotas_antigas_de_arquivo_nao_existem_mais(app_module):
     mod = app_module(app_password=None)
     cliente = mod.app.test_client()

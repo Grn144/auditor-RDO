@@ -12,8 +12,9 @@ O **Auditor de Relatórios** automatiza essa conferência: dado um relatório
 (ou uma obra inteira), ele baixa e organiza as fotos por código de tarefa e,
 opcionalmente, usa um modelo de IA com visão para avaliar se cada foto é
 compatível com a descrição da atividade — sinalizando as que precisam de
-revisão manual. Roda inteiramente na sua máquina, sem enviar o token de
-acesso para nenhum servidor além da própria API do Diário de Obra.
+revisão manual. Rodando localmente, tudo fica na sua máquina; rodando
+hospedado (ver "Deploy" abaixo), o token é enviado ao servidor a cada
+requisição, mas nunca é salvo nele.
 
 Ferramenta de linha de comando que, para um relatório do sistema **Diário de Obra**:
 
@@ -164,3 +165,13 @@ erradas repetidas (rate limit simples). Em ambos os casos:
 (`--workers 1`, já configurado no `Procfile`) — o cache de relatórios, o
 controle de tentativas de login e os zips prontos para download vivem em
 memória, e workers diferentes não veem a memória um do outro.
+
+**Importante:** `APP_PASSWORD` só funciona com segurança se o app rodar
+atrás de HTTPS com um proxy reverso confiável na frente — exatamente o que
+o Render (o caminho de deploy documentado acima) já fornece por padrão.
+Rodar este app com `PORT` definida mas sem um proxy real terminando TLS na
+frente não é suportado: o cookie de sessão é marcado `Secure` (só trafega
+em HTTPS) e vira um loop de redirecionamento silencioso para `/login`
+mesmo com a senha certa, e o rate limit do login passa a confiar
+cegamente no cabeçalho `X-Forwarded-For`, que qualquer requisição pode
+forjar sem um proxy real filtrando-o.
