@@ -4,28 +4,53 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Entrar — Auditor RDO</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
+  :root{
+    --bg:#f4f6f9; --surface:#ffffff; --surface-2:#eef2f7; --border:#dce3ec;
+    --text:#101828; --muted:#5d6b85; --brand:#1f6feb; --brand-ink:#0b3d91;
+    --bad:#b91c1c; --bad-bg:#fee2e2;
+  }
+  @media (prefers-color-scheme:dark){:root{
+    --bg:#0d1117; --surface:#161b22; --surface-2:#1c232d; --border:#2a323d;
+    --text:#e6edf3; --muted:#9aa7b8; --brand:#4d9fff; --brand-ink:#79b6ff;
+    --bad:#f87171; --bad-bg:#3a1414;
+  }}
+  *{box-sizing:border-box}
   body{margin:0;min-height:100vh;display:grid;place-items:center;
-    font-family:"Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
-    background:#f4f6f9;color:#1a2230}
-  .card{background:#fff;border:1px solid #dce3ec;border-radius:14px;
-    box-shadow:0 1px 3px rgba(16,24,40,.08),0 8px 24px rgba(16,24,40,.06);
-    padding:28px;width:320px}
-  h1{font-size:18px;margin:0 0 18px}
-  input{width:100%;padding:11px 13px;font-size:14px;background:#eef2f7;
-    border:1px solid #dce3ec;border-radius:10px;color:#1a2230;margin-bottom:14px;box-sizing:border-box}
-  button{width:100%;padding:12px;font-size:14px;font-weight:650;border:none;
-    border-radius:10px;background:#1f6feb;color:#fff;cursor:pointer}
-  .erro{background:#fee2e2;color:#b91c1c;border-radius:8px;padding:9px 12px;
-    font-size:13px;margin-bottom:14px}
+    font-family:"Inter","Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif;
+    background:var(--bg);color:var(--text)}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+    box-shadow:0 1px 3px rgba(16,24,40,.08),0 12px 32px rgba(16,24,40,.08);
+    padding:32px;width:328px}
+  .logo{width:44px;height:44px;border-radius:11px;background:var(--brand);
+    display:grid;place-items:center;font-size:22px;margin-bottom:16px}
+  h1{font-size:18px;margin:0 0 4px;font-weight:750;letter-spacing:-.2px}
+  p.sub{margin:0 0 22px;font-size:13px;color:var(--muted)}
+  label{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:6px}
+  input{width:100%;padding:11px 13px;font-size:14px;font-family:inherit;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:10px;color:var(--text);margin-bottom:16px;
+    box-sizing:border-box;outline:none;transition:border-color .15s,box-shadow .15s}
+  input:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,111,235,.16)}
+  button{width:100%;padding:12px;font-size:14px;font-family:inherit;font-weight:650;border:none;
+    border-radius:10px;background:var(--brand);color:#fff;cursor:pointer;transition:filter .15s}
+  button:hover{filter:brightness(1.07)}
+  .erro{background:var(--bad-bg);color:var(--bad);border-radius:8px;padding:9px 12px;
+    font-size:13px;margin-bottom:16px}
 </style>
 </head>
 <body>
   <form class="card" method="post">
-    <h1>🏗️ Auditor RDO</h1>
+    <div class="logo">🏗️</div>
+    <h1>Auditor RDO</h1>
+    <p class="sub">Entre com sua conta da equipe para continuar</p>
     {% if erro %}<div class="erro">{{ erro }}</div>{% endif %}
-    <input type="text" name="usuario" placeholder="Usuário" autofocus required autocomplete="username">
-    <input type="password" name="senha" placeholder="Senha" required autocomplete="current-password">
+    <label for="usuario">Usuário</label>
+    <input type="text" id="usuario" name="usuario" placeholder="seu.usuario" autofocus required autocomplete="username">
+    <label for="senha">Senha</label>
+    <input type="password" id="senha" name="senha" placeholder="••••••••" required autocomplete="current-password">
     <button type="submit">Entrar</button>
   </form>
 </body>
