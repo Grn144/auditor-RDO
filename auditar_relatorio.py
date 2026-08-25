@@ -280,9 +280,12 @@ def coletar_fotos_obra(client: DiarioObraClient, obra_id: str,
     com_fotos = [(tid, info) for tid, info in mapa.items()
                  if info.get("total_fotos", 0) > 0]
 
-    def log(msg):
+    def log(msg, atual=None, total=None):
+        """`atual`/`total` são opcionais: quando informados, o chamador
+        (ex.: a interface web) pode desenhar uma barra de progresso real
+        em vez de só mostrar a mensagem."""
         if progresso:
-            progresso(msg)
+            progresso(msg, atual, total)
         else:
             print(msg)
 
@@ -316,7 +319,8 @@ def coletar_fotos_obra(client: DiarioObraClient, obra_id: str,
                          miniatura=foto.get("urlMiniatura") or url)
                 )
         log(f"   ({n}/{len(com_fotos)}) {grupo}{codigo}: "
-            f"{len(por_chave.get((subpasta, codigo), []))} fotos")
+            f"{len(por_chave.get((subpasta, codigo), []))} fotos",
+            atual=n, total=len(com_fotos))
 
     fotos: list[Foto] = []
     for (_sub, codigo), lista in por_chave.items():

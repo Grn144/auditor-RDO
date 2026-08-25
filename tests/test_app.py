@@ -284,3 +284,57 @@ def test_cache_de_dns_ainda_bloqueia_ip_privado(app_module, monkeypatch):
 
     monkeypatch.setattr(mod.socket, "getaddrinfo", stub_privado)
     assert mod._url_de_imagem_segura("https://interno.exemplo.com/a.jpg") is False
+
+
+def test_carregar_transmite_eventos_de_progresso_e_termina_com_fim(app_module, monkeypatch):
+    """/api/carregar precisa ser um stream (como /api/processar): cada
+    chamada do callback de progresso vira um evento ndjson, terminando
+    com um evento "fim" com os dados do relatório/obra — é o que dá pra
+    barra de progresso "12/54 tarefas..." em obras grandes."""
+    mod = app_module(usuarios=None)
+
+    def _coletar_cacheado_fake(token, alvo, progresso=None):
+        progresso("(1/2) A1: 3 fotos", 1, 2)
+        progresso("(2/2) A2: 5 fotos", 2, 2)
+        return [], {"modo": "obra", "titulo": "Obra Teste", "subtitulo": "sub",
+                    "total": 8, "grupos": 1}
+
+    monkeypatch.setattr(mod, "_coletar_cacheado", _coletar_cacheado_fake)
+
+    cliente = mod.app.test_client()
+    resp = cliente.post("/api/carregar", json={"token": "tok", "alvo": "algum-id"})
+    linhas = [json.loads(l) for l in resp.get_data(as_text=True).splitlines() if l.strip()]
+
+    progresso_eventos = [e for e in linhas if e["tipo"] == "progresso"]
+    assert progresso_eventos == [
+        {"tipo": "progresso", "msg": "(1/2) A1: 3 fotos", "atual": 1, "total": 2},
+        {"tipo": "progresso", "msg": "(2/2) A2: 5 fotos", "atual": 2, "total": 2},
+    ]
+
+    evento_fim = linhas[-1]
+    assert evento_fim["tipo"] == "fim"
+    assert evento_fim["titulo"] == "Obra Teste"
+    assert evento_fim["total"] == 8
+
+
+def test_carregar_sem_token_emite_evento_de_erro(app_module):
+    mod = app_module(usuarios=None)
+    cliente = mod.app.test_client()
+    resp = cliente.post("/api/carregar", json={"token": "", "alvo": "algum-id"})
+    linhas = [json.loads(l) for l in resp.get_data(as_text=True).splitlines() if l.strip()]
+    assert linhas[-1]["tipo"] == "erro"
+    assert "token" in linhas[-1]["msg"].lower()
+
+
+def test_carregar_propaga_apperror_como_evento_de_erro(app_module, monkeypatch):
+    def _coletar_cacheado_fake(token, alvo, progresso=None):
+        raise mod.core.AppError("relatório não encontrado")
+
+    mod = app_module(usuarios=None)
+    monkeypatch.setattr(mod, "_coletar_cacheado", _coletar_cacheado_fake)
+
+    cliente = mod.app.test_client()
+    resp = cliente.post("/api/carregar", json={"token": "tok", "alvo": "algum-id"})
+    linhas = [json.loads(l) for l in resp.get_data(as_text=True).splitlines() if l.strip()]
+    assert linhas[-1]["tipo"] == "erro"
+    assert "não encontrado" in linhas[-1]["msg"]

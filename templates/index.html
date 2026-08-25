@@ -162,6 +162,10 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
       <input type="text" id="alvo" placeholder="https://web.diariodeobra.app/#/app/obras/.../lista-de-tarefas">
       <div class="hint">Cole a URL da <b>lista de tarefas da obra</b> (baixa tudo) ou de um <b>relatório</b> específico.</div>
     </label>
+    <div class="hidden" id="progressoCarregar" style="margin-top:6px">
+      <div class="pbar"><i id="pbarCarregarFill"></i></div>
+      <div id="progTxtCarregar" class="hint" style="margin-bottom:2px"></div>
+    </div>
     <div class="row" style="justify-content:flex-end">
       <button class="btn btn-primary" id="btnCarregar">
         <span class="spinner"></span> Carregar relatório
@@ -275,26 +279,48 @@ $("#esquecer").onclick = (e) => { e.preventDefault();
   $("#token").value=""; toast("Token salvo foi apagado deste navegador.");
 };
 
-// carregar relatório
+// carregar relatório (stream NDJSON — mostra progresso real em obras grandes)
 $("#btnCarregar").onclick = async () => {
   const token=$("#token").value.trim(), alvo=$("#alvo").value.trim();
   if(!token) return toast("Cole o token da empresa.");
   if(!alvo)  return toast("Cole a URL do relatório.");
   loading($("#btnCarregar"),true);
+  $("#progressoCarregar").classList.remove("hidden");
+  $("#pbarCarregarFill").style.width="0%";
+  $("#progTxtCarregar").textContent="Lendo tarefas...";
   try{
-    salvarConfig();  // token é sempre lembrado neste PC
+    salvarConfig();  // token é sempre lembrado neste navegador
     const r = await fetch("/api/carregar",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({token, alvo})});
-    const d = await r.json();
-    if(!r.ok){ toast(d.erro||"Falha ao carregar."); return; }
-    ESTADO.fotos=d.fotos; ESTADO.numero=d.numero;
-    renderReport(d); renderGaleria(d.fotos);
+    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf="";
+    while(true){
+      const {value,done}=await reader.read(); if(done) break;
+      buf+=dec.decode(value,{stream:true}); const linhas=buf.split("\n"); buf=linhas.pop();
+      for(const ln of linhas){ if(ln.trim()) handleEventCarregar(JSON.parse(ln)); }
+    }
+  }catch(e){ toast("Erro: "+e); }
+  finally{ loading($("#btnCarregar"),false); $("#progressoCarregar").classList.add("hidden"); }
+};
+
+function handleEventCarregar(ev){
+  if(ev.tipo==="progresso"){
+    if(ev.atual!=null && ev.total){
+      const pct=Math.round(ev.atual/ev.total*100);
+      $("#pbarCarregarFill").style.width=pct+"%";
+      $("#progTxtCarregar").textContent=`${ev.atual} / ${ev.total} tarefas...`;
+    }else{
+      $("#progTxtCarregar").textContent=ev.msg;
+    }
+  }else if(ev.tipo==="erro"){
+    toast(ev.msg||"Falha ao carregar.");
+  }else if(ev.tipo==="fim"){
+    ESTADO.fotos=ev.fotos; ESTADO.numero=ev.numero;
+    renderReport(ev); renderGaleria(ev.fotos);
     $("#cardReport").classList.remove("hidden");
     $("#cardResult").classList.add("hidden");
     $("#cardReport").scrollIntoView({behavior:"smooth",block:"start"});
-  }catch(e){ toast("Erro: "+e); }
-  finally{ loading($("#btnCarregar"),false); }
-};
+  }
+}
 
 function renderReport(d){
   $("#chips").innerHTML =

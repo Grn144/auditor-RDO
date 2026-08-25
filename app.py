@@ -22,6 +22,7 @@ import copy
 import ipaddress
 import json
 import os
+import queue
 import secrets
 import shutil
 import socket
@@ -275,24 +276,66 @@ def index():
 def api_carregar():
     body = request.get_json(force=True)
     token = (body.get("token") or "").strip()
-    if not token:
-        return jsonify({"erro": "Informe o token do Diário de Obra."}), 400
-    try:
-        fotos, info = _coletar_cacheado(token, body.get("alvo", ""))
-    except core.AppError as e:
-        return jsonify({"erro": str(e)}), 400
-    except Exception as e:  # noqa: BLE001
-        return jsonify({"erro": f"Erro inesperado: {e}"}), 500
+    alvo = body.get("alvo", "")
 
-    return jsonify({
-        "modo": info["modo"],
-        "titulo": info["titulo"],
-        "subtitulo": info["subtitulo"],
-        "total": info["total"],
-        "grupos": info["grupos"],
-        "tarefas": len({f.codigo for f in fotos}),
-        "fotos": [_foto_dict(f) for f in fotos],
-    })
+    def evento(d: dict) -> str:
+        return json.dumps(d, ensure_ascii=False) + "\n"
+
+    @stream_with_context
+    def gerar():
+        if not token:
+            yield evento({"tipo": "erro", "msg": "Informe o token do Diário de Obra."})
+            return
+
+        # A coleta roda numa thread à parte, mandando o progresso por uma
+        # fila — assim dá pra ir transmitindo os eventos conforme chegam
+        # (ex.: "12/54 tarefas...") em vez de só no final, útil em obras
+        # grandes onde a coleta de todas as tarefas demora.
+        fila: queue.Queue = queue.Queue()
+        resultado: dict = {}
+
+        def progresso(msg, atual=None, total=None):
+            fila.put({"tipo": "progresso", "msg": msg, "atual": atual, "total": total})
+
+        def trabalhar():
+            try:
+                fotos, info = _coletar_cacheado(token, alvo, progresso)
+                resultado["fotos"] = fotos
+                resultado["info"] = info
+            except core.AppError as e:
+                resultado["erro"] = str(e)
+            except Exception as e:  # noqa: BLE001
+                resultado["erro"] = f"Erro inesperado: {e}"
+            finally:
+                fila.put(None)  # sentinela: coleta terminou
+
+        threading.Thread(target=trabalhar, daemon=True).start()
+
+        while True:
+            item = fila.get()
+            if item is None:
+                break
+            yield evento(item)
+
+        if "erro" in resultado:
+            yield evento({"tipo": "erro", "msg": resultado["erro"]})
+            return
+
+        fotos, info = resultado["fotos"], resultado["info"]
+        yield evento({
+            "tipo": "fim",
+            "modo": info["modo"],
+            "titulo": info["titulo"],
+            "subtitulo": info["subtitulo"],
+            "total": info["total"],
+            "grupos": info["grupos"],
+            "tarefas": len({f.codigo for f in fotos}),
+            "fotos": [_foto_dict(f) for f in fotos],
+        })
+
+    return Response(gerar(), mimetype="application/x-ndjson",
+                    headers={"Cache-Control": "no-cache",
+                             "X-Accel-Buffering": "no"})
 
 
 @app.route("/api/img")
