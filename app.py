@@ -207,6 +207,9 @@ def _adicionar_cabecalhos_seguranca(resp: Response) -> Response:
 
 @app.before_request
 def _exigir_login():
+    print(f"[diagnostico-temp] path={request.path!r} endpoint={request.endpoint!r} "
+          f"autenticado={session.get('autenticado')!r} cookies={list(request.cookies.keys())!r}",
+          flush=True)
     if not APP_PASSWORD:
         return None
     if request.endpoint in ("login", "static") or session.get("autenticado"):
