@@ -45,8 +45,6 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
-print(f"[diagnostico-temp] APP_PASSWORD configurada: {bool(APP_PASSWORD)} "
-      f"(len={len(APP_PASSWORD) if APP_PASSWORD else 0})", flush=True)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -207,9 +205,6 @@ def _adicionar_cabecalhos_seguranca(resp: Response) -> Response:
 
 @app.before_request
 def _exigir_login():
-    print(f"[diagnostico-temp] path={request.path!r} endpoint={request.endpoint!r} "
-          f"autenticado={session.get('autenticado')!r} cookies={list(request.cookies.keys())!r}",
-          flush=True)
     if not APP_PASSWORD:
         return None
     if request.endpoint in ("login", "static") or session.get("autenticado"):
