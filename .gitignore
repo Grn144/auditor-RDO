@@ -1,0 +1,22 @@
+# Segredos e configuração local — NUNCA versionar (contém o token do Diário de Obra
+# e, opcionalmente, a chave da Groq).
+config.json
+
+# Ambientes / variáveis
+.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Saída do app (fotos baixadas, CSVs de auditoria)
+Downloads/
+downloads/
+*.csv
+
+# Diversos
+_tid.txt
+.DS_Store
