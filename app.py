@@ -45,6 +45,8 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1)
 
 APP_PASSWORD = os.environ.get("APP_PASSWORD")
+print(f"[diagnostico-temp] APP_PASSWORD configurada: {bool(APP_PASSWORD)} "
+      f"(len={len(APP_PASSWORD) if APP_PASSWORD else 0})", flush=True)
 app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
