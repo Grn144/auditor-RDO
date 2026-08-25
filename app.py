@@ -61,28 +61,10 @@ def _ip_bloqueado(ip: str) -> bool:
     _login_tentativas[ip] = tentativas
     return len(tentativas) >= _LOGIN_MAX_TENTATIVAS
 
-CONFIG_PATH = Path(__file__).with_name("config.json")
-
 # Cache curto do resultado da coleta, para o "baixar" não refazer o trabalho
 # que o "carregar" já fez (importante em obras grandes, que levam dezenas de s).
 _CACHE: dict = {}
 _CACHE_TTL = 600  # 10 minutos
-
-
-# ----------------------------------------------------------------------------
-# Persistência simples do token (opcional, "lembrar neste PC")
-# ----------------------------------------------------------------------------
-
-def _ler_config() -> dict:
-    try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return {}
-
-
-def _salvar_config(dados: dict) -> None:
-    CONFIG_PATH.write_text(json.dumps(dados, ensure_ascii=False, indent=2),
-                           encoding="utf-8")
 
 
 # ----------------------------------------------------------------------------
@@ -224,37 +206,6 @@ def login():
 @app.route("/")
 def index():
     return render_template("index.html")
-
-
-@app.route("/api/config", methods=["GET"])
-def api_config_get():
-    cfg = _ler_config()
-    return jsonify({
-        "token": cfg.get("token", ""),
-        "groq_key": cfg.get("groq_key", ""),
-        "lembrar": bool(cfg.get("token")),
-    })
-
-
-@app.route("/api/config", methods=["POST"])
-def api_config_post():
-    body = request.get_json(force=True)
-    # O token é sempre salvo (fica lembrado neste PC). Preserva o que já existe
-    # quando um campo vier vazio.
-    atual = _ler_config()
-    token = (body.get("token") or "").strip() or atual.get("token", "")
-    groq_key = (body.get("groq_key") or "").strip() or atual.get("groq_key", "")
-    _salvar_config({"token": token, "groq_key": groq_key})
-    return jsonify({"ok": True})
-
-
-@app.route("/api/config/limpar", methods=["POST"])
-def api_config_limpar():
-    try:
-        CONFIG_PATH.unlink(missing_ok=True)
-    except Exception:  # noqa: BLE001
-        pass
-    return jsonify({"ok": True})
 
 
 @app.route("/api/carregar", methods=["POST"])

@@ -157,7 +157,7 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
         <input type="password" id="token" placeholder="Cole aqui o token de Cadastros &gt; Empresa &gt; Gerar token" autocomplete="off">
         <button class="eye" id="eyeToken" title="Mostrar/ocultar">👁</button>
       </div>
-      <div class="hint">🔒 O token é salvo neste computador e preenchido automaticamente. <a href="https://web.diariodeobra.app" target="_blank" rel="noopener">Abrir o sistema</a> · <a href="#" id="esquecer">esquecer token salvo</a></div>
+      <div class="hint">🔒 O token é salvo neste navegador e preenchido automaticamente. <a href="https://web.diariodeobra.app" target="_blank" rel="noopener">Abrir o sistema</a> · <a href="#" id="esquecer">esquecer token salvo</a></div>
     </label>
     <label class="field">
       <span class="lab">URL da obra ou do relatório</span>
@@ -259,21 +259,25 @@ $("#provedor").onchange = e => {
     : 'Chave paga em <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>.';
 };
 
-// prefill config (token é sempre lembrado)
-fetch("/api/config").then(r=>r.json()).then(c=>{
-  if(c.token){ $("#token").value=c.token; }
-  if(c.groq_key){ $("#chaveIA").value=c.groq_key; }
-}).catch(()=>{});
+// prefill (token é lembrado neste navegador, via localStorage)
+try{
+  const tokenSalvo = localStorage.getItem("auditor_rdo_token");
+  const chaveSalva = localStorage.getItem("auditor_rdo_groq_key");
+  if(tokenSalvo) $("#token").value = tokenSalvo;
+  if(chaveSalva) $("#chaveIA").value = chaveSalva;
+}catch(e){}
 
 function salvarConfig(){
-  fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({token:$("#token").value.trim(), groq_key:$("#chaveIA").value.trim()})});
+  try{
+    localStorage.setItem("auditor_rdo_token", $("#token").value.trim());
+    localStorage.setItem("auditor_rdo_groq_key", $("#chaveIA").value.trim());
+  }catch(e){}
 }
-// salva ao terminar de digitar/colar o token ou a chave
 $("#token").addEventListener("change", salvarConfig);
 $("#chaveIA").addEventListener("change", salvarConfig);
 $("#esquecer").onclick = (e) => { e.preventDefault();
-  fetch("/api/config/limpar",{method:"POST"}).then(()=>{ $("#token").value=""; toast("Token salvo foi apagado deste PC."); });
+  try{ localStorage.removeItem("auditor_rdo_token"); }catch(err){}
+  $("#token").value=""; toast("Token salvo foi apagado deste navegador.");
 };
 
 // carregar relatório

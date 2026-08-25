@@ -86,3 +86,11 @@ def test_rate_limit_por_ip_via_x_forwarded_for(app_module):
     # Não deve conter "aguarde" (não está bloqueado), mas conterá "incorreta"
     assert "aguarde" not in resp_b_nao_bloqueado.get_data(as_text=True).lower()
     assert "incorreta" in resp_b_nao_bloqueado.get_data(as_text=True).lower()
+
+
+def test_rotas_de_config_nao_existem_mais(app_module):
+    mod = app_module(app_password=None)
+    cliente = mod.app.test_client()
+    assert cliente.get("/api/config").status_code == 404
+    assert cliente.post("/api/config", json={}).status_code == 404
+    assert cliente.post("/api/config/limpar").status_code == 404
