@@ -175,11 +175,9 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
   <div class="card hidden" id="cardReport">
     <h2><span class="num">2</span> Relatório carregado</h2>
     <div class="chips" id="chips"></div>
-    <div class="destino" id="destino"></div>
 
     <div class="ia-panel">
       <div class="row" style="justify-content:space-between">
-        <label class="checkline"><input type="checkbox" id="forcar"> Rebaixar mesmo se já existir</label>
         <label class="checkline"><input type="checkbox" id="usarIA"> Auditar fotos com IA</label>
       </div>
       <div id="iaOpts" class="hidden" style="margin-top:12px">
@@ -224,8 +222,7 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
     <h2><span class="num">✓</span> Concluído</h2>
     <div class="summary-grid" id="summary"></div>
     <div class="row">
-      <button class="btn btn-primary" id="btnPasta">📂 Abrir pasta</button>
-      <button class="btn btn-ghost" id="btnCsv">⬇ Baixar CSV</button>
+      <button class="btn btn-primary" id="btnZip">⬇ Baixar .zip (fotos + auditoria.csv)</button>
     </div>
   </div>
 
@@ -238,7 +235,7 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
 
 <script>
 const $ = s => document.querySelector(s);
-let ESTADO = { fotos:[], destino:"", csv:"", numero:null };
+let ESTADO = { fotos:[], zipId:"", numero:null };
 
 function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("show");
   clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),5000); }
@@ -292,7 +289,7 @@ $("#btnCarregar").onclick = async () => {
       body:JSON.stringify({token, alvo})});
     const d = await r.json();
     if(!r.ok){ toast(d.erro||"Falha ao carregar."); return; }
-    ESTADO.fotos=d.fotos; ESTADO.destino=d.destino; ESTADO.numero=d.numero;
+    ESTADO.fotos=d.fotos; ESTADO.numero=d.numero;
     renderReport(d); renderGaleria(d.fotos);
     $("#cardReport").classList.remove("hidden");
     $("#cardResult").classList.add("hidden");
@@ -308,7 +305,6 @@ function renderReport(d){
      <div class="chip"><span class="k">Fotos</span> <b>${d.total}</b></div>
      <div class="chip"><span class="k">Tarefas</span> <b>${d.tarefas}</b></div>
      <div class="chip"><span class="k">Grupos</span> <b>${d.grupos}</b></div>`;
-  $("#destino").innerHTML = `Serão salvas em: <code>${esc(d.destino)}</code>`;
 }
 
 function renderGaleria(fotos){
@@ -347,7 +343,7 @@ $("#btnProcessar").onclick = async () => {
   const usarIA=$("#usarIA").checked;
   const payload={
     token:$("#token").value.trim(), alvo:$("#alvo").value.trim(),
-    forcar:$("#forcar").checked, ia:usarIA,
+    ia:usarIA,
     provedor:$("#provedor").value, chave_ia:$("#chaveIA").value.trim()
   };
   if(usarIA && !payload.chave_ia) return toast("Informe a chave da IA (ou desmarque a auditoria).");
@@ -375,8 +371,8 @@ function logln(s){ const l=$("#log"); l.textContent+=s+"\n"; l.scrollTop=l.scrol
 
 function handleEvent(ev){
   if(ev.tipo==="log"){ logln("• "+ev.msg); }
-  else if(ev.tipo==="inicio"){ ESTADO.destino=ev.destino;
-    $("#progTxt").textContent=`0 / ${ev.total} fotos`; logln(`Baixando para: ${ev.destino}`); }
+  else if(ev.tipo==="inicio"){
+    $("#progTxt").textContent=`0 / ${ev.total} fotos`; logln("Baixando fotos..."); }
   else if(ev.tipo==="foto"){
     const pct=Math.round(ev.i/ev.total*100);
     $("#pbarFill").style.width=pct+"%"; $("#progTxt").textContent=`${ev.i} / ${ev.total} fotos`;
@@ -395,7 +391,7 @@ function handleEvent(ev){
     if(ev.status==="erro") linha+=` (${ev.detalhe||""})`;
     logln(linha);
   }
-  else if(ev.tipo==="fim"){ ESTADO.csv=ev.csv; ESTADO.destino=ev.destino;
+  else if(ev.tipo==="fim"){ ESTADO.zipId=ev.zip_id;
     logln("Concluído."); renderResumo(ev.resumo); $("#cardResult").classList.remove("hidden");
     $("#cardResult").scrollIntoView({behavior:"smooth",block:"start"}); }
   else if(ev.tipo==="erro"){ toast(ev.msg); logln("ERRO: "+ev.msg); }
@@ -411,9 +407,7 @@ function renderResumo(r){
   $("#summary").innerHTML=html;
 }
 
-$("#btnPasta").onclick=()=>fetch("/api/abrir-pasta",{method:"POST",headers:{"Content-Type":"application/json"},
-  body:JSON.stringify({caminho:ESTADO.destino})}).then(r=>r.json()).then(d=>{ if(d.erro) toast(d.erro); });
-$("#btnCsv").onclick=()=>{ if(ESTADO.csv) location.href="/api/csv?caminho="+encodeURIComponent(ESTADO.csv); };
+$("#btnZip").onclick=()=>{ if(ESTADO.zipId) location.href="/api/zip/"+ESTADO.zipId; };
 $("#btnTrocar").onclick=()=>{ $("#cardReport").classList.add("hidden");
   $("#cardProgress").classList.add("hidden"); $("#cardResult").classList.add("hidden");
   $("#galeria").innerHTML=""; $("#cardConfig").scrollIntoView({behavior:"smooth"}); };

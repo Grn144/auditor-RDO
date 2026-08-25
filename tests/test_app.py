@@ -94,3 +94,45 @@ def test_rotas_de_config_nao_existem_mais(app_module):
     assert cliente.get("/api/config").status_code == 404
     assert cliente.post("/api/config", json={}).status_code == 404
     assert cliente.post("/api/config/limpar").status_code == 404
+
+
+def test_zip_helpers_e_rota_download(app_module, tmp_path):
+    mod = app_module(app_password=None)
+    pasta = tmp_path / "fotos_teste"
+    pasta.mkdir()
+    (pasta / "A1.jpg").write_bytes(b"fake-jpg")
+    (pasta / "auditoria.csv").write_text("codigo;arquivo\nA1;A1.jpg", encoding="utf-8")
+
+    zid = mod._zipar_diretorio(pasta, "relatorio_teste")
+
+    assert not pasta.exists()  # pasta de origem foi removida depois de zipar
+    cliente = mod.app.test_client()
+    resp = cliente.get(f"/api/zip/{zid}")
+    assert resp.status_code == 200
+    assert "relatorio_teste.zip" in resp.headers.get("Content-Disposition", "")
+
+
+def test_zip_id_desconhecido_da_404(app_module):
+    mod = app_module(app_password=None)
+    cliente = mod.app.test_client()
+    resp = cliente.get("/api/zip/nao-existe")
+    assert resp.status_code == 404
+
+
+def test_limpar_zips_antigos_remove_expirados(app_module, tmp_path):
+    mod = app_module(app_password=None)
+    arquivo_zip = tmp_path / "velho.zip"
+    arquivo_zip.write_bytes(b"conteudo")
+    zid = "velho"
+    mod._zips[zid] = {"caminho": arquivo_zip, "nome": "velho.zip",
+                       "criado_em": time.time() - mod._ZIP_TTL - 10}
+    mod._limpar_zips_antigos()
+    assert zid not in mod._zips
+    assert not arquivo_zip.exists()
+
+
+def test_rotas_antigas_de_arquivo_nao_existem_mais(app_module):
+    mod = app_module(app_password=None)
+    cliente = mod.app.test_client()
+    assert cliente.post("/api/abrir-pasta", json={}).status_code == 404
+    assert cliente.get("/api/csv").status_code == 404
