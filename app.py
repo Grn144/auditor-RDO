@@ -149,6 +149,33 @@ def _foto_dict(f: core.Foto) -> dict:
 # Validação de inputs (SSRF na imagem proxied)
 # ----------------------------------------------------------------------------
 
+_DNS_CACHE_TTL = 300  # 5 minutos
+_dns_cache: dict[str, tuple[bool, float]] = {}  # host -> (é_seguro, quando)
+
+
+def _host_e_seguro(host: str) -> bool:
+    """Resolve `host` e diz se todos os IPs são públicos (não privados/
+    loopback/link-local/reservados/multicast). Guarda o resultado em cache
+    por `_DNS_CACHE_TTL` — sem isso, um relatório com dezenas de fotos do
+    mesmo domínio de CDN repete a mesma busca de DNS a cada foto."""
+    entrada = _dns_cache.get(host)
+    if entrada is not None and time.time() - entrada[1] < _DNS_CACHE_TTL:
+        return entrada[0]
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        seguro = False
+    else:
+        seguro = all(
+            not (ip := ipaddress.ip_address(info[4][0])).is_private
+            and not ip.is_loopback and not ip.is_link_local
+            and not ip.is_reserved and not ip.is_multicast
+            for info in infos
+        )
+    _dns_cache[host] = (seguro, time.time())
+    return seguro
+
+
 def _url_de_imagem_segura(u: str) -> bool:
     """Só permite proxy de imagens https, bloqueando localhost/IPs privados
     (evita que o proxy seja usado para acessar rede interna - SSRF)."""
@@ -158,15 +185,7 @@ def _url_de_imagem_segura(u: str) -> bool:
         return False
     if partes.scheme != "https" or not partes.hostname:
         return False
-    try:
-        infos = socket.getaddrinfo(partes.hostname, None)
-    except socket.gaierror:
-        return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
-            return False
-    return True
+    return _host_e_seguro(partes.hostname)
 
 
 # ----------------------------------------------------------------------------

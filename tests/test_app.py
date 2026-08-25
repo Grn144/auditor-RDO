@@ -228,3 +228,59 @@ def test_rotas_antigas_de_arquivo_nao_existem_mais(app_module):
     cliente = mod.app.test_client()
     assert cliente.post("/api/abrir-pasta", json={}).status_code == 404
     assert cliente.get("/api/csv").status_code == 404
+
+
+def _stub_getaddrinfo_publico(host, *args, **kwargs):
+    """Substitui a resolução DNS real por um IP público fixo, pra testar a
+    validação sem depender de rede de verdade."""
+    return [(2, 1, 6, "", ("93.184.216.34", 0))]
+
+
+def test_validacao_de_url_de_imagem_faz_cache_da_resolucao_dns(app_module, monkeypatch):
+    """A busca de DNS pra validar a URL não pode se repetir a cada foto do
+    mesmo domínio — isso soma muito tempo num relatório com dezenas de
+    fotos. Deve resolver uma vez e reaproveitar por um tempo (TTL)."""
+    mod = app_module(usuarios=None)
+    chamadas = []
+
+    def contador(host, *args, **kwargs):
+        chamadas.append(host)
+        return _stub_getaddrinfo_publico(host, *args, **kwargs)
+
+    monkeypatch.setattr(mod.socket, "getaddrinfo", contador)
+
+    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/a.jpg") is True
+    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/b.jpg") is True
+    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/c.jpg") is True
+    assert chamadas == ["cdn.exemplo.com"]  # só resolveu uma vez
+
+
+def test_cache_de_dns_expira_apos_o_ttl(app_module, monkeypatch):
+    mod = app_module(usuarios=None)
+    monkeypatch.setattr(mod.socket, "getaddrinfo", _stub_getaddrinfo_publico)
+
+    agora = time.time()
+    monkeypatch.setattr(mod.time, "time", lambda: agora)
+    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/a.jpg") is True
+
+    chamadas = []
+
+    def contador(host, *args, **kwargs):
+        chamadas.append(host)
+        return _stub_getaddrinfo_publico(host, *args, **kwargs)
+
+    monkeypatch.setattr(mod.socket, "getaddrinfo", contador)
+    monkeypatch.setattr(mod.time, "time", lambda: agora + mod._DNS_CACHE_TTL + 1)
+    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/b.jpg") is True
+    assert chamadas == ["cdn.exemplo.com"]  # expirou, resolveu de novo
+
+
+def test_cache_de_dns_ainda_bloqueia_ip_privado(app_module, monkeypatch):
+    """O cache não pode enfraquecer a proteção contra SSRF."""
+    mod = app_module(usuarios=None)
+
+    def stub_privado(host, *args, **kwargs):
+        return [(2, 1, 6, "", ("192.168.1.1", 0))]
+
+    monkeypatch.setattr(mod.socket, "getaddrinfo", stub_privado)
+    assert mod._url_de_imagem_segura("https://interno.exemplo.com/a.jpg") is False

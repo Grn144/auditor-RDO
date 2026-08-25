@@ -155,7 +155,7 @@ o navegador — não é um cookie "lembrar de mim". Em ambos os casos:
 3. Configuração do serviço:
    - **Build command:** `pip install -r requirements.txt`
    - **Start command:** deixe em branco (o Render lê o `Procfile`
-     automaticamente) ou use `gunicorn app:app --workers 1 --threads 4`.
+     automaticamente) ou use `gunicorn app:app --workers 1 --threads 16`.
 4. Em **Environment**, adicione as variáveis:
    - `APP_USERS` — um JSON com um usuário por pessoa da equipe, cada um com
      o **hash** da senha (nunca a senha em texto puro). Gere o hash de cada
