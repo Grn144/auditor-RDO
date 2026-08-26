@@ -243,10 +243,14 @@ def test_pdf_rota_gera_relatorio_valido(app_module, tmp_path):
 
 
 def _planilha_medicao_teste_bytes():
-    """Um .xlsx mínimo no formato esperado: 1 item (grupo A, item 1) na
-    linha 8, sem nenhuma rodada ainda lançada."""
+    """Um .xlsx mínimo no formato esperado: cabeçalho na linha 7 (coluna
+    A="ITEM", QT./MEDIÇÃO 01 nas colunas P/Q) e 1 item (grupo A, item 1)
+    na linha 8, sem nenhuma rodada ainda lançada."""
     wb = openpyxl.Workbook()
     ws = wb.active
+    ws.cell(row=7, column=1, value="ITEM")
+    ws.cell(row=7, column=16, value="QT.")
+    ws.cell(row=7, column=17, value="MEDIÇÃO 01")
     ws.cell(row=8, column=1, value="A")
     ws.cell(row=8, column=2, value="1")
     ws.cell(row=8, column=3, value="ITEM A1")
@@ -317,6 +321,27 @@ def test_planilha_medicao_rota_rejeita_rodada_invalida(app_module, tmp_path):
     resp = cliente.post(
         f"/api/planilha-medicao/{zid}",
         data={"rodada": "9", "planilha": (_planilha_medicao_teste_bytes(), "medicao.xlsx")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 400
+
+
+def test_planilha_medicao_rota_planilha_sem_cabecalho_reconhecivel_da_400(app_module, tmp_path):
+    """Arquivo enviado não é reconhecido como a planilha de medição
+    (sem cabeçalho "ITEM") — erro do arquivo do usuário, não do
+    servidor: 400, não 500."""
+    mod = app_module(usuarios=None)
+    zid = _preparar_zip_obra(mod, tmp_path, atividades=[])
+    wb_vazio = openpyxl.Workbook()
+    buf = io.BytesIO()
+    wb_vazio.save(buf)
+    buf.seek(0)
+
+    cliente = mod.app.test_client()
+    resp = cliente.post(
+        f"/api/planilha-medicao/{zid}",
+        data={"rodada": "1", "planilha": (buf, "vazia.xlsx")},
         content_type="multipart/form-data",
     )
 

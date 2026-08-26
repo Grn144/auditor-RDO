@@ -574,6 +574,7 @@ def api_pdf(zid):
                      download_name=nome_pdf, mimetype="application/pdf")
 
 
+_RODADAS_VALIDAS = {1, 2, 3, 4}
 _LIMITE_AVISOS_HEADER = 40  # cabeçalho HTTP não é lugar pra uma lista sem limite
 
 
@@ -607,7 +608,7 @@ def api_planilha_medicao(zid):
         rodada = int(request.form.get("rodada", ""))
     except ValueError:
         rodada = 0
-    if rodada not in planilha_medicao.RODADA_COLUNAS:
+    if rodada not in _RODADAS_VALIDAS:
         return "Rodada de medição inválida (use 1, 2, 3 ou 4).", 400
 
     arquivo = request.files.get("planilha")
@@ -618,11 +619,17 @@ def api_planilha_medicao(zid):
     try:
         wb = openpyxl.load_workbook(arquivo.stream)
         avisos = planilha_medicao.preencher_medicao(wb, atividades, rodada)
-        saida = io.BytesIO()
-        wb.save(saida)
-        saida.seek(0)
-    except Exception as e:  # noqa: BLE001 — erro no arquivo enviado, não trava o servidor
+    except ValueError as e:
+        # Estrutura da planilha não reconhecida (sem cabeçalho "ITEM",
+        # sem coluna dessa rodada etc.) ou arquivo não é um .xlsx válido
+        # — problema no arquivo enviado, não no servidor.
+        return f"Não consegui processar a planilha: {e}", 400
+    except Exception as e:  # noqa: BLE001 — erro inesperado, não trava o servidor
         return f"Erro ao processar a planilha: {e}", 500
+
+    saida = io.BytesIO()
+    wb.save(saida)
+    saida.seek(0)
 
     nome_saida = Path(arquivo.filename).stem + f"_medicao{rodada:02d}.xlsx"
     resp = send_file(
