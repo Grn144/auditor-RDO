@@ -114,13 +114,30 @@ class _DocumentoRelatorio(BaseDocTemplate):
         canvas.restoreState()
 
 
+def _reduzir_para_exibicao(dados_img: bytes, largura_alvo_px: int,
+                           altura_alvo_px: int) -> bytes:
+    """Reduz a imagem (sem cortar) pro tamanho máximo necessário de
+    exibição, preservando a proporção — nunca amplia. Mesmo raciocínio
+    de `_cortar_para_preencher`: embutir a foto em resolução original
+    quando ela só vai aparecer pequena no PDF desperdiça memória à toa."""
+    im = PILImage.open(io.BytesIO(dados_img)).convert("RGB")
+    if im.width > largura_alvo_px or im.height > altura_alvo_px:
+        im.thumbnail((largura_alvo_px, altura_alvo_px), PILImage.LANCZOS)
+    buf = io.BytesIO()
+    im.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
 def _caixa_imagem_obra(dados_img: bytes, largura_caixa: float, altura_caixa: float):
     try:
         leitor = ImageReader(io.BytesIO(dados_img))
         nl, na = leitor.getSize()
         escala = min(largura_caixa / nl, altura_caixa / na)
         w, h = nl * escala, na * escala
-        img = Image(io.BytesIO(dados_img), width=w, height=h)
+        largura_px = max(1, round(w / 72 * 200))
+        altura_px = max(1, round(h / 72 * 200))
+        reduzida = _reduzir_para_exibicao(dados_img, largura_px, altura_px)
+        img = Image(io.BytesIO(reduzida), width=w, height=h)
         img.hAlign = "CENTER"
     except Exception:  # noqa: BLE001 — imagem inválida/corrompida: ignora
         return None
@@ -305,10 +322,16 @@ def _bloco_atividades(atividades: list[dict]) -> list:
     return elementos
 
 
-def _cortar_para_preencher(dados_img: bytes, aspecto: float) -> bytes:
+def _cortar_para_preencher(dados_img: bytes, aspecto: float,
+                           largura_alvo_px: int, altura_alvo_px: int) -> bytes:
     """Corta a imagem pelo centro pra preencher exatamente a proporção
     largura/altura pedida, sem distorcer (equivalente a object-fit: cover
-    em CSS) — o excesso é cortado, nunca esticado."""
+    em CSS) — o excesso é cortado, nunca esticado. Em seguida REDUZ pro
+    tamanho de exibição real (largura_alvo_px/altura_alvo_px, nunca
+    amplia) — sem isso, uma foto de celular em resolução original (ex.:
+    4000x3000px) ia inteira pro PDF mesmo sendo exibida numa área de
+    ~8cm, e em relatórios com centenas de fotos isso sozinho já estourava
+    a memória do Render free tier (512MB)."""
     im = PILImage.open(io.BytesIO(dados_img)).convert("RGB")
     w, h = im.size
     atual = w / h
@@ -320,8 +343,10 @@ def _cortar_para_preencher(dados_img: bytes, aspecto: float) -> bytes:
         nova_h = max(1, round(w / aspecto))
         y0 = (h - nova_h) // 2
         im = im.crop((0, y0, w, y0 + nova_h))
+    if im.width > largura_alvo_px:
+        im = im.resize((largura_alvo_px, altura_alvo_px), PILImage.LANCZOS)
     buf = io.BytesIO()
-    im.save(buf, format="JPEG", quality=85)
+    im.save(buf, format="JPEG", quality=82)
     return buf.getvalue()
 
 
@@ -387,12 +412,19 @@ class _CardFoto(Flowable):
         self._desenhar_etiqueta(c, h)
         self._paragrafo.drawOn(c, self.PAD_TEXTO, self.PAD_TEXTO)
 
+    # DPI alvo pra embutir a foto — 200 já é generoso pra impressão a esse
+    # tamanho de card (~8cm); acima disso só engorda o arquivo à toa.
+    DPI_IMAGEM = 200
+
     def _desenhar_imagem(self, c, w, h):
         y_img = h - self.altura_imagem
         dados_img = self.carregar_img() if self.carregar_img else None
         if dados_img:
             try:
-                cortada = _cortar_para_preencher(dados_img, w / self.altura_imagem)
+                largura_px = max(1, round(w / 72 * self.DPI_IMAGEM))
+                altura_px = max(1, round(self.altura_imagem / 72 * self.DPI_IMAGEM))
+                cortada = _cortar_para_preencher(dados_img, w / self.altura_imagem,
+                                                 largura_px, altura_px)
                 c.drawImage(ImageReader(io.BytesIO(cortada)), 0, y_img,
                            width=w, height=self.altura_imagem, mask="auto")
                 return
