@@ -37,6 +37,19 @@ LOGO_PATH = Path(__file__).parent / "static" / "officez_logo.png"
 MARGEM = 18 * mm
 SELO_LARGURA = 34 * mm  # selo de status na tabela de atividades ("Concluída · 100%")
 
+# DPI alvo pra qualquer imagem embutida no PDF (fotos e logo da obra) —
+# um único padrão, igual pra todo relatório. Descoberto na prática
+# (medindo RSS real do processo, não só o que o tracemalloc enxerga): o
+# próprio ReportLab retém internamente uma cópia por imagem desenhada
+# até o documento inteiro terminar de ser montado — não é só o
+# processamento em si. Isso escala com o Nº de pixels que cada imagem
+# tem ao ser desenhada, então mais que o corte/resize, é ESSE valor que
+# decide o pico de memória em relatórios com centenas de fotos. 100 DPI
+# mede ~166MB pra 365 fotos de câmera de celular (contra ~538MB a
+# 200 DPI) — ainda nítido o suficiente pro card de ~8cm, com boa margem
+# dentro dos 512MB do Render free tier.
+DPI_IMAGEM = 100
+
 _styles = getSampleStyleSheet()
 ESTILO_LABEL = ParagraphStyle(
     "Label", parent=_styles["Normal"], fontSize=7, textColor=MUTED,
@@ -120,11 +133,14 @@ def _reduzir_para_exibicao(dados_img: bytes, largura_alvo_px: int,
     exibição, preservando a proporção — nunca amplia. Mesmo raciocínio
     de `_cortar_para_preencher`: embutir a foto em resolução original
     quando ela só vai aparecer pequena no PDF desperdiça memória à toa."""
-    im = PILImage.open(io.BytesIO(dados_img)).convert("RGB")
+    im = PILImage.open(io.BytesIO(dados_img))
+    im.draft("RGB", (largura_alvo_px, altura_alvo_px))
+    im = im.convert("RGB")
     if im.width > largura_alvo_px or im.height > altura_alvo_px:
         im.thumbnail((largura_alvo_px, altura_alvo_px), PILImage.LANCZOS)
     buf = io.BytesIO()
     im.save(buf, format="JPEG", quality=85)
+    im.close()
     return buf.getvalue()
 
 
@@ -134,8 +150,8 @@ def _caixa_imagem_obra(dados_img: bytes, largura_caixa: float, altura_caixa: flo
         nl, na = leitor.getSize()
         escala = min(largura_caixa / nl, altura_caixa / na)
         w, h = nl * escala, na * escala
-        largura_px = max(1, round(w / 72 * 200))
-        altura_px = max(1, round(h / 72 * 200))
+        largura_px = max(1, round(w / 72 * DPI_IMAGEM))
+        altura_px = max(1, round(h / 72 * DPI_IMAGEM))
         reduzida = _reduzir_para_exibicao(dados_img, largura_px, altura_px)
         img = Image(io.BytesIO(reduzida), width=w, height=h)
         img.hAlign = "CENTER"
@@ -332,7 +348,15 @@ def _cortar_para_preencher(dados_img: bytes, aspecto: float,
     4000x3000px) ia inteira pro PDF mesmo sendo exibida numa área de
     ~8cm, e em relatórios com centenas de fotos isso sozinho já estourava
     a memória do Render free tier (512MB)."""
-    im = PILImage.open(io.BytesIO(dados_img)).convert("RGB")
+    im = PILImage.open(io.BytesIO(dados_img))
+    # Pede pro decodificador JPEG já entregar a imagem perto do tamanho
+    # final (o libjpeg decodifica em escalas 1, 1/2, 1/4, 1/8 direto do
+    # arquivo) — evita alocar o bitmap gigante da resolução original
+    # (uma foto de 4000x3000 decodificada cheia usa uns 36MB só ela, por
+    # UMA foto; era isso que ainda estourava os 512MB do Render mesmo já
+    # cortando/reduzindo DEPOIS de decodificar).
+    im.draft("RGB", (largura_alvo_px, altura_alvo_px))
+    im = im.convert("RGB")
     w, h = im.size
     atual = w / h
     if atual > aspecto:
@@ -347,6 +371,7 @@ def _cortar_para_preencher(dados_img: bytes, aspecto: float,
         im = im.resize((largura_alvo_px, altura_alvo_px), PILImage.LANCZOS)
     buf = io.BytesIO()
     im.save(buf, format="JPEG", quality=82)
+    im.close()
     return buf.getvalue()
 
 
@@ -412,21 +437,25 @@ class _CardFoto(Flowable):
         self._desenhar_etiqueta(c, h)
         self._paragrafo.drawOn(c, self.PAD_TEXTO, self.PAD_TEXTO)
 
-    # DPI alvo pra embutir a foto — 200 já é generoso pra impressão a esse
-    # tamanho de card (~8cm); acima disso só engorda o arquivo à toa.
-    DPI_IMAGEM = 200
-
     def _desenhar_imagem(self, c, w, h):
         y_img = h - self.altura_imagem
         dados_img = self.carregar_img() if self.carregar_img else None
         if dados_img:
             try:
-                largura_px = max(1, round(w / 72 * self.DPI_IMAGEM))
-                altura_px = max(1, round(self.altura_imagem / 72 * self.DPI_IMAGEM))
+                largura_px = max(1, round(w / 72 * DPI_IMAGEM))
+                altura_px = max(1, round(self.altura_imagem / 72 * DPI_IMAGEM))
                 cortada = _cortar_para_preencher(dados_img, w / self.altura_imagem,
                                                  largura_px, altura_px)
+                # mask="auto" faz o ReportLab reabrir/reprocessar a imagem
+                # pra detectar transparência — e retém isso em cache
+                # internamente pelo resto do documento. `_cortar_para_
+                # preencher` sempre devolve JPEG opaco (convert("RGB")
+                # remove qualquer canal alfa), então não há nada pra
+                # detectar: sem mask, sem esse custo. Foi isso que ainda
+                # estourava a memória do Render com centenas de fotos,
+                # mesmo já lendo e reduzindo cada uma sob demanda.
                 c.drawImage(ImageReader(io.BytesIO(cortada)), 0, y_img,
-                           width=w, height=self.altura_imagem, mask="auto")
+                           width=w, height=self.altura_imagem)
                 return
             except Exception:  # noqa: BLE001 — imagem corrompida/formato inválido
                 pass
