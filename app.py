@@ -20,13 +20,11 @@ from __future__ import annotations
 
 import copy
 import io
-import ipaddress
 import json
 import os
 import queue
 import secrets
 import shutil
-import socket
 import tempfile
 import threading
 import time
@@ -62,7 +60,15 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=bool(APP_USERS),
+    # Único upload de arquivo do usuário nesta app (planilha de medição);
+    # sem isso o Flask aceita corpo de requisição de qualquer tamanho.
+    MAX_CONTENT_LENGTH=20 * 1024 * 1024,  # 20 MB
 )
+
+
+@app.errorhandler(413)
+def _arquivo_grande_demais(_e):
+    return "Arquivo enviado é grande demais (limite: 20 MB).", 413
 
 _LOGIN_JANELA = 15 * 60  # 15 minutos
 _LOGIN_MAX_TENTATIVAS = 10
@@ -156,49 +162,6 @@ def _foto_dict(f: core.Foto) -> dict:
 
 
 # ----------------------------------------------------------------------------
-# Validação de inputs (SSRF na imagem proxied)
-# ----------------------------------------------------------------------------
-
-_DNS_CACHE_TTL = 300  # 5 minutos
-_dns_cache: dict[str, tuple[bool, float]] = {}  # host -> (é_seguro, quando)
-
-
-def _host_e_seguro(host: str) -> bool:
-    """Resolve `host` e diz se todos os IPs são públicos (não privados/
-    loopback/link-local/reservados/multicast). Guarda o resultado em cache
-    por `_DNS_CACHE_TTL` — sem isso, um relatório com dezenas de fotos do
-    mesmo domínio de CDN repete a mesma busca de DNS a cada foto."""
-    entrada = _dns_cache.get(host)
-    if entrada is not None and time.time() - entrada[1] < _DNS_CACHE_TTL:
-        return entrada[0]
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        seguro = False
-    else:
-        seguro = all(
-            not (ip := ipaddress.ip_address(info[4][0])).is_private
-            and not ip.is_loopback and not ip.is_link_local
-            and not ip.is_reserved and not ip.is_multicast
-            for info in infos
-        )
-    _dns_cache[host] = (seguro, time.time())
-    return seguro
-
-
-def _url_de_imagem_segura(u: str) -> bool:
-    """Só permite proxy de imagens https, bloqueando localhost/IPs privados
-    (evita que o proxy seja usado para acessar rede interna - SSRF)."""
-    try:
-        partes = urllib.parse.urlparse(u)
-    except ValueError:
-        return False
-    if partes.scheme != "https" or not partes.hostname:
-        return False
-    return _host_e_seguro(partes.hostname)
-
-
-# ----------------------------------------------------------------------------
 # Entrega dos arquivos via .zip (cada processamento grava num diretório
 # temporário; a pessoa baixa o zip resultante pelo navegador)
 # ----------------------------------------------------------------------------
@@ -235,6 +198,22 @@ def _adicionar_cabecalhos_seguranca(resp: Response) -> Response:
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    # 'unsafe-inline' em script/style porque os templates usam <script>/
+    # <style> inline (sem build step) — mesmo assim já bloqueia carregar
+    # recurso de outra origem, plugin/objeto embutido e ser enquadrado
+    # (frame-ancestors complementa o X-Frame-Options acima).
+    resp.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+    # Inofensivo em http (o navegador só aplica HSTS sobre https) — não
+    # precisa condicionar ao modo hospedado.
+    resp.headers.setdefault("Strict-Transport-Security",
+                            "max-age=31536000; includeSubDomains")
+    resp.headers.setdefault(
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=(), payment=()")
     return resp
 
 
@@ -357,7 +336,7 @@ def api_carregar():
 def api_img():
     """Proxy das imagens (evita bloqueio de hotlink/CORS na galeria)."""
     u = request.args.get("u", "")
-    if not _url_de_imagem_segura(u):
+    if not core._url_de_imagem_segura(u):
         return "url inválida", 400
     try:
         req = urllib.request.Request(u, headers={"User-Agent": "auditor-rdo/1.0"})
@@ -405,6 +384,16 @@ def api_processar():
                 pasta = pasta_temp / foto.subpasta if foto.subpasta else pasta_temp
                 pasta.mkdir(parents=True, exist_ok=True)
                 caminho = pasta / foto.nome_arquivo
+                if not core._caminho_dentro_da_pasta(pasta_temp, caminho):
+                    # Defesa em profundidade: `codigo` já é sanitizado em
+                    # `montar_mapa_tarefas`, mas essa checagem no ponto de
+                    # gravação garante que nunca escreve fora da pasta
+                    # temporária da requisição, mesmo se algo mudar lá.
+                    yield evento({"tipo": "foto", "i": i, "total": total,
+                                  "uid": f"{foto.subpasta}/{foto.nome_arquivo}",
+                                  "codigo": foto.codigo, "nome": foto.nome_arquivo,
+                                  "status": "erro", "detalhe": "nome de arquivo inválido"})
+                    continue
                 foto.caminho = caminho
                 status = "baixado"
                 try:
@@ -547,7 +536,7 @@ def api_pdf(zid):
 
     imagem_obra = None
     foto_url = cabecalho.get("fotoUrl")
-    if foto_url and _url_de_imagem_segura(foto_url):
+    if foto_url and core._url_de_imagem_segura(foto_url):
         try:
             req = urllib.request.Request(foto_url, headers={"User-Agent": "auditor-rdo/1.0"})
             with urllib.request.urlopen(req, timeout=15, context=core.SSL_CONTEXT) as resp:
@@ -614,6 +603,8 @@ def api_planilha_medicao(zid):
     arquivo = request.files.get("planilha")
     if not arquivo or not arquivo.filename:
         return "Envie o arquivo .xlsx da planilha de medição.", 400
+    if not arquivo.filename.lower().endswith(".xlsx"):
+        return "O arquivo precisa ser uma planilha .xlsx.", 400
 
     atividades = info.get("atividades") or []
     dados = arquivo.stream.read()

@@ -145,9 +145,11 @@ o navegador — não é um cookie "lembrar de mim". Em ambos os casos:
 - As fotos processadas e o `auditoria.csv` são entregues como um `.zip`
   baixado pelo navegador — nenhum arquivo fica salvo em disco além de um
   diretório temporário por requisição, removido logo após gerar o zip.
-- Antes de publicar este projeto (ou uma nova versão) em um repositório
-  Git, rode `pip-audit -r requirements.txt` (ou equivalente) para checar
-  dependências com vulnerabilidades conhecidas.
+- Dependências são auditadas automaticamente (`pip-audit`) a cada push/PR
+  no `main` e semanalmente, via GitHub Actions
+  (`.github/workflows/dependency-audit.yml`). Rodando fora do GitHub
+  (fork sem Actions, por exemplo), rode `pip-audit -r requirements.txt`
+  manualmente antes de publicar.
 
 ## Deploy (Render.com)
 

@@ -1,0 +1,27 @@
+name: Auditoria de dependências
+
+# Antes, o README só pedia pra rodar `pip-audit` manualmente antes de
+# publicar. Isso automatiza: roda a cada push/PR no main e uma vez por
+# semana (dependências com vulnerabilidade descoberta depois do último
+# push também precisam ser pegas).
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"  # toda segunda, 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instala pip-audit
+        run: pip install pip-audit
+      - name: Audita requirements.txt
+        run: pip-audit -r requirements.txt

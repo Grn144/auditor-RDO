@@ -32,13 +32,16 @@ from __future__ import annotations
 import argparse
 import base64
 import csv
+import ipaddress
 import json
 import os
 import re
+import socket
 import ssl
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -223,6 +226,13 @@ def montar_mapa_tarefas(
             codigo = numero
             if letra and codigo.upper().startswith(letra.upper()):
                 codigo = codigo[len(letra):].lstrip() or numero
+            # `codigo` vira nome de arquivo (ver `_nome_foto`) — o campo
+            # "item" da tarefa é texto livre no Diário de Obra, então sem
+            # sanitizar isso é travessia de diretório: alguém com acesso
+            # ao cronograma da obra (não precisa ser usuário deste app)
+            # poderia pôr algo como "../../etc/cron.d/x" no número do
+            # item e o arquivo baixado escaparia da pasta de destino.
+            codigo = _sanitizar_pasta(codigo)
             descricao = (tarefa.get("descricao") or "").strip()
             mapa[tid] = {"codigo": codigo,
                          "grupo": letra, "grupo_desc": grupo_desc,
@@ -385,6 +395,19 @@ def _sanitizar_pasta(nome: str) -> str:
     return nome or "SEM_GRUPO"
 
 
+def _caminho_dentro_da_pasta(base: Path, caminho: Path) -> bool:
+    """Confere que `caminho` continua DENTRO de `base` depois de resolvido
+    (segue links/normaliza `..`) — defesa em profundidade contra travessia
+    de diretório, além de já sanitizar `codigo` na origem (ver
+    `montar_mapa_tarefas`). Vale checar de novo bem no ponto em que o
+    arquivo baixado é gravado."""
+    try:
+        caminho.resolve().relative_to(base.resolve())
+        return True
+    except ValueError:
+        return False
+
+
 def _nome_subpasta(grupo: str, grupo_desc: str) -> str:
     """Subpasta = só a letra do grupo, em minúsculo (ex: 'd'). Igual ao
     padrão de organização usado nas obras (pastas a, b, c, d...)."""
@@ -418,8 +441,12 @@ def baixar_fotos(fotos: list[Foto], destino: Path, forcar: bool) -> None:
         pasta = destino / foto.subpasta if foto.subpasta else destino
         pasta.mkdir(parents=True, exist_ok=True)
         caminho = pasta / foto.nome_arquivo
-        foto.caminho = caminho
         rel = f"{foto.subpasta}/{foto.nome_arquivo}" if foto.subpasta else foto.nome_arquivo
+        if not _caminho_dentro_da_pasta(destino, caminho):
+            foto.caminho = None
+            print(f"  [{i}/{total}] IGNORADA (nome de arquivo inválido): {rel}")
+            continue
+        foto.caminho = caminho
         if caminho.exists() and not forcar:
             print(f"  [{i}/{total}] {rel} já existe (pulado).")
             continue
@@ -431,7 +458,52 @@ def baixar_fotos(fotos: list[Foto], destino: Path, forcar: bool) -> None:
             print(f"  [{i}/{total}] FALHA ao baixar {rel}: {e}")
 
 
+_DNS_CACHE_TTL = 300  # 5 minutos
+_dns_cache: dict[str, tuple[bool, float]] = {}  # host -> (é_seguro, quando)
+
+
+def _host_e_seguro(host: str) -> bool:
+    """Resolve `host` e diz se todos os IPs são públicos (não privados/
+    loopback/link-local/reservados/multicast). Guarda o resultado em cache
+    por `_DNS_CACHE_TTL` — sem isso, um relatório com dezenas de fotos do
+    mesmo domínio de CDN repete a mesma busca de DNS a cada foto."""
+    entrada = _dns_cache.get(host)
+    if entrada is not None and time.time() - entrada[1] < _DNS_CACHE_TTL:
+        return entrada[0]
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        seguro = False
+    else:
+        seguro = all(
+            not (ip := ipaddress.ip_address(info[4][0])).is_private
+            and not ip.is_loopback and not ip.is_link_local
+            and not ip.is_reserved and not ip.is_multicast
+            for info in infos
+        )
+    _dns_cache[host] = (seguro, time.time())
+    return seguro
+
+
+def _url_de_imagem_segura(u: str) -> bool:
+    """Só permite https, bloqueando localhost/IPs privados — evita que
+    quem baixa/faz proxy de uma foto seja usado pra acessar rede interna
+    (SSRF). Usada tanto no download em massa (`_baixar_arquivo`, abaixo)
+    quanto no proxy de imagem da interface web (`/api/img` em app.py) —
+    fonte única, pra nunca um dos dois caminhos ficar sem a proteção que
+    o outro tem."""
+    try:
+        partes = urllib.parse.urlparse(u)
+    except ValueError:
+        return False
+    if partes.scheme != "https" or not partes.hostname:
+        return False
+    return _host_e_seguro(partes.hostname)
+
+
 def _baixar_arquivo(url: str, caminho: Path, tentativas: int = 4) -> None:
+    if not _url_de_imagem_segura(url):
+        raise AppError(f"ERRO: URL de foto recusada (SSRF): {url}")
     for tentativa in range(1, tentativas + 1):
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "auditor-rdo/1.0"})
@@ -625,6 +697,19 @@ def _parse_veredito(texto: str) -> tuple[str, str]:
 # Passo 5: saída (CSV + resumo)
 # ----------------------------------------------------------------------------
 
+def _neutralizar_formula_csv(valor: str) -> str:
+    """Evita CSV Injection (CWE-1236): campos vindos de texto livre do
+    Diário de Obra (descrição da tarefa, motivo da IA) vão pro
+    auditoria.csv, que o README recomenda abrir direto no Excel. Um
+    valor começando com "=", "+", "-" ou "@" é interpretado como
+    fórmula (ou comando DDE) pelo Excel/LibreOffice ao abrir — prefixa
+    com um apóstrofo pra virar texto literal, do mesmo jeito que o
+    próprio Excel faz ao digitar isso manualmente numa célula."""
+    if valor and valor[0] in ("=", "+", "-", "@"):
+        return "'" + valor
+    return valor
+
+
 def gerar_csv(fotos: list[Foto], destino: Path) -> Path:
     caminho = destino / "auditoria.csv"
     # utf-8-sig + ';' para abrir corretamente no Excel em português.
@@ -634,7 +719,9 @@ def gerar_csv(fotos: list[Foto], destino: Path) -> Path:
                     "veredito", "motivo"])
         for foto in fotos:
             w.writerow([foto.grupo, foto.codigo, foto.nome_arquivo, foto.subpasta,
-                        foto.descricao, foto.veredito or "NAO_AUDITADO", foto.motivo])
+                        _neutralizar_formula_csv(foto.descricao),
+                        foto.veredito or "NAO_AUDITADO",
+                        _neutralizar_formula_csv(foto.motivo)])
     return caminho
 
 

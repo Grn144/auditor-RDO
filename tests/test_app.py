@@ -32,6 +32,18 @@ def app_module(monkeypatch):
     return _carregar
 
 
+def test_cabecalhos_de_seguranca_presentes_em_toda_resposta(app_module):
+    mod = app_module(usuarios=None)
+    cliente = mod.app.test_client()
+    resp = cliente.get("/")
+    assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+    assert resp.headers.get("X-Frame-Options") == "DENY"
+    assert resp.headers.get("Referrer-Policy") == "no-referrer"
+    assert "default-src 'self'" in resp.headers.get("Content-Security-Policy", "")
+    assert resp.headers.get("Strict-Transport-Security")
+    assert resp.headers.get("Permissions-Policy")
+
+
 def test_sem_usuarios_configurados_nao_exige_login(app_module):
     mod = app_module(usuarios=None)
     cliente = mod.app.test_client()
@@ -214,6 +226,36 @@ def test_limpar_zips_antigos_remove_expirados(app_module, tmp_path):
     assert not arquivo_zip.exists()
 
 
+def test_processar_recusa_gravar_foto_fora_da_pasta_temp(app_module, monkeypatch):
+    """Defesa em profundidade: mesmo que uma `Foto` chegue com
+    `nome_arquivo` de travessia de diretório (não devia mais acontecer
+    depois da sanitização em `montar_mapa_tarefas`, mas a rota web não
+    pode confiar só nisso), a foto é marcada como erro e o download nem
+    é tentado — nunca grava fora da pasta temporária da requisição."""
+    mod = app_module(usuarios=None)
+
+    foto_maliciosa = mod.core.Foto(
+        codigo="x", descricao="d", url="https://x/1.jpg", arquivo_origem="1.jpg",
+        subpasta="a", nome_arquivo="../../fora.jpg")
+
+    def _coletar_cacheado_fake(token, alvo, progresso=None):
+        return [foto_maliciosa], {"modo": "obra", "nome_arquivo": "obra_teste"}
+
+    chamadas_download = []
+    monkeypatch.setattr(mod, "_coletar_cacheado", _coletar_cacheado_fake)
+    monkeypatch.setattr(mod.core, "_baixar_arquivo",
+                        lambda url, caminho, **kw: chamadas_download.append(caminho))
+
+    cliente = mod.app.test_client()
+    resp = cliente.post("/api/processar", json={"token": "tok", "alvo": "algum-id"})
+    linhas = [json.loads(l) for l in resp.get_data(as_text=True).splitlines() if l.strip()]
+
+    eventos_foto = [e for e in linhas if e["tipo"] == "foto"]
+    assert len(eventos_foto) == 1
+    assert eventos_foto[0]["status"] == "erro"
+    assert chamadas_download == []
+
+
 def test_pdf_rota_gera_relatorio_valido(app_module, tmp_path):
     mod = app_module(usuarios=None)
     pasta = tmp_path / "fotos_teste"
@@ -346,6 +388,38 @@ def test_planilha_medicao_rota_planilha_sem_cabecalho_reconhecivel_da_400(app_mo
     )
 
     assert resp.status_code == 400
+
+
+def test_planilha_medicao_rota_rejeita_extensao_diferente_de_xlsx(app_module, tmp_path):
+    mod = app_module(usuarios=None)
+    zid = _preparar_zip_obra(mod, tmp_path, atividades=[])
+
+    cliente = mod.app.test_client()
+    resp = cliente.post(
+        f"/api/planilha-medicao/{zid}",
+        data={"rodada": "1", "planilha": (io.BytesIO(b"nao e um xlsx"), "arquivo.exe")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 400
+
+
+def test_planilha_medicao_rota_recusa_arquivo_maior_que_o_limite(app_module, tmp_path):
+    """Item de segurança: upload sem limite de tamanho permite exaustão
+    de memória/disco. `MAX_CONTENT_LENGTH` faz o Flask recusar antes de
+    a rota sequer rodar."""
+    mod = app_module(usuarios=None)
+    zid = _preparar_zip_obra(mod, tmp_path, atividades=[])
+
+    grande = io.BytesIO(b"0" * (mod.app.config["MAX_CONTENT_LENGTH"] + 1))
+    cliente = mod.app.test_client()
+    resp = cliente.post(
+        f"/api/planilha-medicao/{zid}",
+        data={"rodada": "1", "planilha": (grande, "medicao.xlsx")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 413
 
 
 def test_planilha_medicao_rota_exige_arquivo(app_module, tmp_path):
@@ -518,21 +592,21 @@ def test_validacao_de_url_de_imagem_faz_cache_da_resolucao_dns(app_module, monke
         chamadas.append(host)
         return _stub_getaddrinfo_publico(host, *args, **kwargs)
 
-    monkeypatch.setattr(mod.socket, "getaddrinfo", contador)
+    monkeypatch.setattr(mod.core.socket, "getaddrinfo", contador)
 
-    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/a.jpg") is True
-    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/b.jpg") is True
-    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/c.jpg") is True
+    assert mod.core._url_de_imagem_segura("https://cdn.exemplo.com/a.jpg") is True
+    assert mod.core._url_de_imagem_segura("https://cdn.exemplo.com/b.jpg") is True
+    assert mod.core._url_de_imagem_segura("https://cdn.exemplo.com/c.jpg") is True
     assert chamadas == ["cdn.exemplo.com"]  # só resolveu uma vez
 
 
 def test_cache_de_dns_expira_apos_o_ttl(app_module, monkeypatch):
     mod = app_module(usuarios=None)
-    monkeypatch.setattr(mod.socket, "getaddrinfo", _stub_getaddrinfo_publico)
+    monkeypatch.setattr(mod.core.socket, "getaddrinfo", _stub_getaddrinfo_publico)
 
     agora = time.time()
     monkeypatch.setattr(mod.time, "time", lambda: agora)
-    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/a.jpg") is True
+    assert mod.core._url_de_imagem_segura("https://cdn.exemplo.com/a.jpg") is True
 
     chamadas = []
 
@@ -540,9 +614,9 @@ def test_cache_de_dns_expira_apos_o_ttl(app_module, monkeypatch):
         chamadas.append(host)
         return _stub_getaddrinfo_publico(host, *args, **kwargs)
 
-    monkeypatch.setattr(mod.socket, "getaddrinfo", contador)
-    monkeypatch.setattr(mod.time, "time", lambda: agora + mod._DNS_CACHE_TTL + 1)
-    assert mod._url_de_imagem_segura("https://cdn.exemplo.com/b.jpg") is True
+    monkeypatch.setattr(mod.core.socket, "getaddrinfo", contador)
+    monkeypatch.setattr(mod.time, "time", lambda: agora + mod.core._DNS_CACHE_TTL + 1)
+    assert mod.core._url_de_imagem_segura("https://cdn.exemplo.com/b.jpg") is True
     assert chamadas == ["cdn.exemplo.com"]  # expirou, resolveu de novo
 
 
@@ -553,8 +627,8 @@ def test_cache_de_dns_ainda_bloqueia_ip_privado(app_module, monkeypatch):
     def stub_privado(host, *args, **kwargs):
         return [(2, 1, 6, "", ("192.168.1.1", 0))]
 
-    monkeypatch.setattr(mod.socket, "getaddrinfo", stub_privado)
-    assert mod._url_de_imagem_segura("https://interno.exemplo.com/a.jpg") is False
+    monkeypatch.setattr(mod.core.socket, "getaddrinfo", stub_privado)
+    assert mod.core._url_de_imagem_segura("https://interno.exemplo.com/a.jpg") is False
 
 
 def test_carregar_transmite_eventos_de_progresso_e_termina_com_fim(app_module, monkeypatch):
