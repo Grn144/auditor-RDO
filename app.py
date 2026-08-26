@@ -616,9 +616,19 @@ def api_planilha_medicao(zid):
         return "Envie o arquivo .xlsx da planilha de medição.", 400
 
     atividades = info.get("atividades") or []
+    dados = arquivo.stream.read()
     try:
-        wb = openpyxl.load_workbook(arquivo.stream)
-        avisos = planilha_medicao.preencher_medicao(wb, atividades, rodada)
+        wb = openpyxl.load_workbook(io.BytesIO(dados))
+        # 2ª leitura do MESMO arquivo, só com os valores já calculados
+        # (data_only=True): se uma rodada anterior foi preenchida com
+        # fórmula em vez de número puro, é dali que vem o "já lançado" —
+        # o openpyxl não calcula fórmulas sozinho.
+        try:
+            wb_valores = openpyxl.load_workbook(io.BytesIO(dados), data_only=True)
+        except Exception:  # noqa: BLE001 — sem cache de valores não é fatal
+            wb_valores = None
+        avisos = planilha_medicao.preencher_medicao(wb, atividades, rodada,
+                                                    wb_valores=wb_valores)
     except ValueError as e:
         # Estrutura da planilha não reconhecida (sem cabeçalho "ITEM",
         # sem coluna dessa rodada etc.) ou arquivo não é um .xlsx válido

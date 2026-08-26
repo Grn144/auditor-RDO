@@ -150,6 +150,44 @@ def test_funciona_com_planilha_de_layout_diferente():
     assert avisos == []
 
 
+def test_le_valor_em_cache_quando_rodada_anterior_tem_formula():
+    """Bug real: o cliente preenche a QT. de uma rodada anterior com
+    FÓRMULA (ex.: =G8*0.87) em vez de número puro. Como o openpyxl não
+    calcula fórmulas, ler `.value` direto devolve o texto da fórmula —
+    precisa usar o valor já calculado em cache (2º workbook, o mesmo
+    arquivo aberto com data_only=True) pra não tratar como 0 e duplicar
+    o valor na próxima rodada."""
+    wb = _wb_com_linhas([{"row": 8, "a": "A", "b": "1", "c": "ITEM A1"}])
+    wb.active.cell(row=8, column=16, value="=G8*0.87")  # fórmula, não número
+
+    wb_valores = _wb_com_linhas([{"row": 8, "a": "A", "b": "1", "c": "ITEM A1"}])
+    wb_valores.active.cell(row=8, column=16, value=61.77)  # valor já calculado
+
+    # realizado atual = 71 * 87% = 61,77 -- igual ao que a fórmula já mediu,
+    # ou seja, nada mudou desde a rodada 1: o incremento tem que ser 0.
+    atividades = [{"grupo": "A", "codigo": "1", "porcentagem": 87, "quantidade": 71}]
+
+    avisos = pm.preencher_medicao(wb, atividades, rodada=2, wb_valores=wb_valores)
+
+    assert wb.active.cell(row=8, column=19).value == 0.0
+    assert avisos == []
+
+
+def test_nao_escreve_e_avisa_quando_formula_da_rodada_anterior_sem_valor_em_cache():
+    """Sem um workbook de valores (ou sem cache disponível nele), não dá
+    pra saber quanto já foi lançado numa célula com fórmula — não pode
+    assumir 0 (duplicaria a medição), tem que avisar e não escrever."""
+    wb = _wb_com_linhas([{"row": 8, "a": "A", "b": "1", "c": "ITEM A1"}])
+    wb.active.cell(row=8, column=16, value="=G8*0.87")
+    atividades = [{"grupo": "A", "codigo": "1", "porcentagem": 87, "quantidade": 71}]
+
+    avisos = pm.preencher_medicao(wb, atividades, rodada=2)  # sem wb_valores
+
+    assert wb.active.cell(row=8, column=19).value is None
+    assert len(avisos) == 1
+    assert "A1" in avisos[0]
+
+
 def test_planilha_sem_cabecalho_reconhecivel_levanta_erro():
     wb = openpyxl.Workbook()  # workbook em branco, sem "ITEM" em lugar nenhum
     with pytest.raises(ValueError):

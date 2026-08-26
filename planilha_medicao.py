@@ -36,8 +36,28 @@ def _normalizar(texto) -> str:
     return sem_acento.strip().upper()
 
 
-def _numero(valor) -> float:
-    return float(valor) if isinstance(valor, (int, float)) else 0.0
+def _numero_ja_lancado(ws, ws_valores, row: int, col: int) -> tuple[float, bool]:
+    """Lê o número já lançado na célula (row, col) de uma rodada
+    anterior. Se a célula tiver uma FÓRMULA em vez de um número puro —
+    caso real: cliente registra o progresso da rodada com uma fórmula
+    tipo "=G13*0.87" —, `.value` devolve o texto da fórmula, não o
+    resultado (o openpyxl não calcula fórmulas). Nesse caso, busca o
+    valor já calculado em cache em `ws_valores` (o mesmo arquivo aberto
+    com data_only=True). Sem conseguir um número de nenhuma das duas
+    formas, NÃO assume 0 — isso duplicaria a medição — e devolve
+    `resolvido=False` pra quem chama decidir (avisar e não escrever).
+
+    Devolve (valor, resolvido)."""
+    bruto = ws.cell(row=row, column=col).value
+    if isinstance(bruto, (int, float)):
+        return float(bruto), True
+    if bruto is None:
+        return 0.0, True
+    if ws_valores is not None:
+        cache = ws_valores.cell(row=row, column=col).value
+        if isinstance(cache, (int, float)):
+            return float(cache), True
+    return 0.0, False
 
 
 def _localizar_estrutura(ws) -> tuple[int, dict[int, int]]:
@@ -97,16 +117,23 @@ def _mapa_atividades(atividades: list[dict]) -> dict[tuple[str, str], dict]:
     return mapa
 
 
-def preencher_medicao(wb, atividades: list[dict], rodada: int) -> list[str]:
+def preencher_medicao(wb, atividades: list[dict], rodada: int, wb_valores=None) -> list[str]:
     """Preenche, na 1ª planilha de `wb`, a coluna QT. da `rodada` (1-4)
     com o incremento de cada item desde a última rodada já lançada.
     Muta `wb` in place. Devolve a lista de avisos — itens sem
     correspondência, incrementos que dariam negativo etc. — sem nunca
     levantar exceção por causa deles.
 
+    `wb_valores`: o mesmo arquivo carregado com `data_only=True` —
+    usado só pra ler o valor em cache de rodadas anteriores que tenham
+    sido preenchidas com fórmula em vez de número puro (ver
+    `_numero_ja_lancado`). Opcional; sem ele, uma rodada anterior com
+    fórmula gera aviso em vez de arriscar duplicar o valor.
+
     Levanta ValueError se não achar a estrutura da planilha (cabeçalho
     ou colunas de medição) ou se `rodada` não existir nela."""
     ws = wb.worksheets[0]
+    ws_valores = wb_valores.worksheets[0] if wb_valores is not None else None
     header_row, rodada_colunas = _localizar_estrutura(ws)
 
     if rodada not in rodada_colunas:
@@ -137,8 +164,21 @@ def preencher_medicao(wb, atividades: list[dict], rodada: int) -> list[str]:
             continue
 
         porcentagem = ativ.get("porcentagem") or 0
-        ja_lancado = sum(_numero(ws.cell(row=row, column=c).value)
-                         for c in cols_anteriores)
+        ja_lancado = 0.0
+        leitura_falhou = False
+        for c in cols_anteriores:
+            valor, ok = _numero_ja_lancado(ws, ws_valores, row, c)
+            if not ok:
+                leitura_falhou = True
+                break
+            ja_lancado += valor
+        if leitura_falhou:
+            avisos.append(
+                f"Item {item_label}: uma rodada anterior tem fórmula na "
+                "coluna QT. e não consegui ler o valor calculado — não "
+                "preenchido, confira manualmente pra não duplicar a medição.")
+            continue
+
         realizado_atual = quantidade * (porcentagem / 100)
         incremento = round(realizado_atual - ja_lancado, 2)
 
