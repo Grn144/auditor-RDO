@@ -20,8 +20,10 @@ recalculam sozinhas quando o Excel abrir o arquivo.
 """
 from __future__ import annotations
 
+import io
 import re
 import unicodedata
+import zipfile
 
 _PADRAO_RODADA = re.compile(r"^MEDICAO\s*0?(\d+)$")
 
@@ -197,3 +199,67 @@ def preencher_medicao(wb, atividades: list[dict], rodada: int, wb_valores=None) 
                           "na planilha de medição.")
 
     return avisos
+
+
+_PADRAO_EXTERNAL_LINK = re.compile(r"^xl/externalLinks/externalLink\d+\.xml$")
+
+
+def _corrigir_rels_link_externo(link_xml: str, rels_xml: str) -> str:
+    """Corrige o Id da relação de um externalLinkN.xml.rels pra bater
+    com o r:id que o externalLinkN.xml realmente referencia.
+
+    Bug real observado num arquivo de cliente: quando o link externo
+    (referência a outra planilha) usa a extensão xxl21:alternateUrls do
+    Excel (comum em arquivos de rede/Google Drive, que guardam um
+    caminho alternativo absoluto), o openpyxl descarta essa extensão ao
+    resalvar — permitido, é `mc:Ignorable` — mas erra a renumeração do
+    relacionamento que sobra: o <externalBook> fica com r:id="rId1"
+    enquanto o .rels só tem "rId2". Essa referência quebrada é
+    inválida e faz o Excel recusar o arquivo pedindo reparo."""
+    m = re.search(r'<externalBook[^>]*\br:id="([^"]+)"', link_xml)
+    if not m:
+        return rels_xml
+    id_esperado = m.group(1)
+
+    ids_existentes = re.findall(r'\bId="([^"]+)"', rels_xml)
+    if id_esperado in ids_existentes or len(ids_existentes) != 1:
+        # já está consistente, ou tem mais de uma relação (não dá pra
+        # saber qual trocar sem ambiguidade) — não mexe.
+        return rels_xml
+
+    return rels_xml.replace(f'Id="{ids_existentes[0]}"', f'Id="{id_esperado}"', 1)
+
+
+def corrigir_links_externos(dados_xlsx: bytes) -> bytes:
+    """Aplica `_corrigir_rels_link_externo` em cada link externo do
+    pacote .xlsx (bytes brutos do arquivo), devolvendo um novo .xlsx só
+    com essa correção — todo o resto do pacote sai byte a byte igual.
+    Sem link externo nenhum, devolve `dados_xlsx` sem modificar."""
+    entrada = zipfile.ZipFile(io.BytesIO(dados_xlsx))
+    nomes_links = [n for n in entrada.namelist() if _PADRAO_EXTERNAL_LINK.match(n)]
+    if not nomes_links:
+        return dados_xlsx
+
+    correcoes: dict[str, str] = {}
+    for nome_link in nomes_links:
+        pasta, arquivo = nome_link.rsplit("/", 1)
+        rels_nome = f"{pasta}/_rels/{arquivo}.rels"
+        if rels_nome not in entrada.namelist():
+            continue
+        link_xml = entrada.read(nome_link).decode("utf-8")
+        rels_xml = entrada.read(rels_nome).decode("utf-8")
+        corrigido = _corrigir_rels_link_externo(link_xml, rels_xml)
+        if corrigido != rels_xml:
+            correcoes[rels_nome] = corrigido
+
+    if not correcoes:
+        return dados_xlsx
+
+    saida_buf = io.BytesIO()
+    with zipfile.ZipFile(saida_buf, "w", zipfile.ZIP_DEFLATED) as saida:
+        for item in entrada.infolist():
+            if item.filename in correcoes:
+                saida.writestr(item, correcoes[item.filename])
+            else:
+                saida.writestr(item, entrada.read(item.filename))
+    return saida_buf.getvalue()

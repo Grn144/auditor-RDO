@@ -5,6 +5,8 @@ As colunas QT./MEDIÇÃO 0N e a linha de cabeçalho NÃO são fixas — dois
 arquivos reais de clientes diferentes (AXA e Magalu) vieram com layouts
 diferentes (linha do cabeçalho e nº de colunas descritivas antes de
 QT. mudam), então os testes cobrem explicitamente mais de um layout."""
+import io
+
 import openpyxl
 import pytest
 
@@ -192,3 +194,62 @@ def test_planilha_sem_cabecalho_reconhecivel_levanta_erro():
     wb = openpyxl.Workbook()  # workbook em branco, sem "ITEM" em lugar nenhum
     with pytest.raises(ValueError):
         pm.preencher_medicao(wb, [], rodada=1)
+
+
+# --- correção do link externo quebrado pelo round-trip do openpyxl ------
+
+def _xlsx_com_link_externo_quebrado():
+    """Reproduz em miniatura o .xlsx real que veio corrompido: um
+    externalLink1.xml (link pra outra planilha) cujo <externalBook>
+    referencia "rId1", mas o .rels correspondente só tem "rId2" — é
+    exatamente o que o openpyxl produz quando resalva um link externo
+    com a extensão xxl21:alternateUrls (usada em arquivos de rede/Drive)
+    e descarta essa extensão sem renumerar o relacionamento que sobra."""
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("xl/externalLinks/externalLink1.xml",
+                  '<externalLink xmlns:r="r"><externalBook r:id="rId1">'
+                  '<sheetNames><sheetName val="Planilha1"/></sheetNames>'
+                  '</externalBook></externalLink>')
+        z.writestr("xl/externalLinks/_rels/externalLink1.xml.rels",
+                  '<Relationships xmlns="rel"><Relationship '
+                  'Type="externalLinkPath" Target="file:///C:/outra.xlsx" '
+                  'TargetMode="External" Id="rId2" /></Relationships>')
+        z.writestr("outra/parte/qualquer.xml", "<x>conteúdo intocado</x>")
+    return buf.getvalue()
+
+
+def test_corrigir_links_externos_renumera_relacionamento_orfao():
+    dados = _xlsx_com_link_externo_quebrado()
+
+    corrigidos = pm.corrigir_links_externos(dados)
+
+    import zipfile
+    z = zipfile.ZipFile(io.BytesIO(corrigidos))
+    rels = z.read("xl/externalLinks/_rels/externalLink1.xml.rels").decode("utf-8")
+    assert 'Id="rId1"' in rels
+    assert 'Id="rId2"' not in rels
+    # o resto do pacote não pode ser tocado
+    assert z.read("outra/parte/qualquer.xml").decode("utf-8") == "<x>conteúdo intocado</x>"
+    assert z.read("xl/externalLinks/externalLink1.xml").decode("utf-8") == \
+        zipfile.ZipFile(io.BytesIO(dados)).read("xl/externalLinks/externalLink1.xml").decode("utf-8")
+
+
+def test_corrigir_links_externos_nao_mexe_quando_ja_esta_consistente():
+    dados = _xlsx_com_link_externo_quebrado()
+    corrigidos = pm.corrigir_links_externos(dados)
+
+    # já está consistente agora — rodar de novo não pode mudar nada
+    corrigidos2 = pm.corrigir_links_externos(corrigidos)
+    assert corrigidos2 == corrigidos
+
+
+def test_corrigir_links_externos_sem_link_nenhum_devolve_igual():
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("xl/worksheets/sheet1.xml", "<worksheet />")
+    dados = buf.getvalue()
+
+    assert pm.corrigir_links_externos(dados) == dados

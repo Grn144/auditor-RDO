@@ -639,11 +639,14 @@ def api_planilha_medicao(zid):
 
     saida = io.BytesIO()
     wb.save(saida)
-    saida.seek(0)
+    # Planilhas com link pra outra pasta de trabalho (comum em orçamento
+    # ligado a uma "obra mãe") saem com uma referência quebrada depois
+    # do round-trip do openpyxl — ver `corrigir_links_externos`.
+    dados_saida = planilha_medicao.corrigir_links_externos(saida.getvalue())
 
     nome_saida = Path(arquivo.filename).stem + f"_medicao{rodada:02d}.xlsx"
     resp = send_file(
-        saida, as_attachment=True, download_name=nome_saida,
+        io.BytesIO(dados_saida), as_attachment=True, download_name=nome_saida,
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     resp.headers["X-Avisos"] = _avisos_para_header(avisos)
     resp.headers["Access-Control-Expose-Headers"] = "X-Avisos"
