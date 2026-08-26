@@ -235,6 +235,12 @@ def montar_mapa_tarefas(
                 "porcentagem": int(tarefa.get("porcentagem") or 0),
                 "quantidade": producao.get("quantidade"),
                 "unidade": producao.get("unidade"),
+                # Quantidade já realizada de verdade — não confundir com
+                # calcular quantidade*porcentagem/100: porcentagem vem
+                # arredondada (int, 0-100) e isso perde precisão (ex.:
+                # 23/53 = 43,39...% arredonda pra 43%, e 53*0.43=22,79,
+                # não os 23 reais). Usada na planilha de medição.
+                "realizado": producao.get("realizado"),
             })
     print(f"  {len(mapa)} tarefas mapeadas.")
     return mapa, atividades

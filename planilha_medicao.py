@@ -181,7 +181,15 @@ def preencher_medicao(wb, atividades: list[dict], rodada: int, wb_valores=None) 
                 "preenchido, confira manualmente pra não duplicar a medição.")
             continue
 
-        realizado_atual = quantidade * (porcentagem / 100)
+        # Prefere o campo `realizado` da API (fonte da verdade — mesmo
+        # número mostrado em "Qtd. já realizada" na tela do app). Só cai
+        # pra quantidade*porcentagem/100 se ele não vier (dado antigo/
+        # incompleto): porcentagem é arredondada (int, 0-100) e recalcular
+        # por ela perde precisão (ex.: 23/53=43,39...% → 43% → 53*0,43=
+        # 22,79, não os 23 reais).
+        realizado_atual = ativ.get("realizado")
+        if realizado_atual is None:
+            realizado_atual = quantidade * (porcentagem / 100)
         incremento = round(realizado_atual - ja_lancado, 2)
 
         if incremento < 0:

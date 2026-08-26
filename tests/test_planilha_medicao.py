@@ -113,6 +113,21 @@ def test_ignora_linha_de_cabecalho_de_categoria():
     assert avisos == []
 
 
+def test_usa_o_campo_realizado_direto_em_vez_de_calcular_pela_porcentagem():
+    """Bug real: quantidade=53, porcentagem=43% (arredondada) dá
+    53*0,43=22,79, mas o valor real ("Qtd. já realizada" no app) é 23 —
+    tem que usar o campo `realizado` da API direto, e não recalcular
+    pela porcentagem arredondada (perde precisão)."""
+    wb = _wb_com_linhas([{"row": 8, "a": "D", "b": "3", "c": "ITEM D3"}])
+    atividades = [{"grupo": "D", "codigo": "3", "porcentagem": 43,
+                   "quantidade": 53, "realizado": 23}]
+
+    avisos = pm.preencher_medicao(wb, atividades, rodada=1)
+
+    assert wb.active.cell(row=8, column=16).value == 23
+    assert avisos == []
+
+
 def test_avisa_quando_tarefa_sem_quantidade_cadastrada():
     wb = _wb_com_linhas([{"row": 8, "a": "A", "b": "1", "c": "ITEM A1"}])
     atividades = [{"grupo": "A", "codigo": "1", "porcentagem": 40, "quantidade": None}]

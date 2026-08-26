@@ -26,7 +26,7 @@ def test_montar_mapa_tarefas_inclui_percentual_e_quantidade():
                  "descricao": "FORNECIMENTO DE SEGURO\n-\nCRONOGRAMA: X",
                  "porcentagem": 100, "totalFotos": 0,
                  "controleDeProducao": {"ativo": True, "quantidade": 1,
-                                        "unidade": "VB"}},
+                                        "unidade": "VB", "realizado": 1}},
                 {"_id": "t2", "item": "2", "descricao": "SEM PRODUCAO",
                  "porcentagem": 0, "totalFotos": 2},
             ]},
@@ -42,10 +42,13 @@ def test_montar_mapa_tarefas_inclui_percentual_e_quantidade():
     assert len(atividades) == 2
     assert atividades[0] == {"grupo": "A", "grupo_desc": "PRÉ-OBRA", "codigo": "1",
                              "descricao": "FORNECIMENTO DE SEGURO",
-                             "porcentagem": 100, "quantidade": 1, "unidade": "VB"}
-    # Tarefa sem controleDeProducao: quantidade/unidade ficam None (não quebra).
+                             "porcentagem": 100, "quantidade": 1, "unidade": "VB",
+                             "realizado": 1}
+    # Tarefa sem controleDeProducao: quantidade/unidade/realizado ficam
+    # None (não quebra).
     assert atividades[1]["quantidade"] is None
     assert atividades[1]["unidade"] is None
+    assert atividades[1]["realizado"] is None
     assert atividades[1]["porcentagem"] == 0
 
 
