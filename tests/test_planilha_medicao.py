@@ -2,9 +2,9 @@
 (grupo+item) com as tarefas do app e cálculo do incremento por rodada.
 
 As colunas QT./MEDIÇÃO 0N e a linha de cabeçalho NÃO são fixas — dois
-arquivos reais de clientes diferentes (AXA e Magalu) vieram com layouts
-diferentes (linha do cabeçalho e nº de colunas descritivas antes de
-QT. mudam), então os testes cobrem explicitamente mais de um layout."""
+arquivos reais de clientes diferentes vieram com layouts diferentes
+(linha do cabeçalho e nº de colunas descritivas antes de QT. mudam),
+então os testes cobrem explicitamente mais de um layout."""
 import io
 
 import openpyxl
@@ -12,9 +12,9 @@ import pytest
 
 import planilha_medicao as pm
 
-# Layout da planilha real da AXA: cabeçalho na linha 7, QT. da rodada 1
-# na coluna P (16) — usado como padrão nos testes que não são sobre
-# variação de layout.
+# Layout de uma das planilhas reais: cabeçalho na linha 7, QT. da
+# rodada 1 na coluna P (16) — usado como padrão nos testes que não são
+# sobre variação de layout.
 _HEADER_ROW_PADRAO = 7
 _RODADA_COLS_PADRAO = {1: 16, 2: 19, 3: 22, 4: 25}
 
@@ -145,12 +145,13 @@ def test_rodada_invalida_levanta_erro():
 
 
 def test_funciona_com_planilha_de_layout_diferente():
-    """Bug real: a planilha de outro cliente (Magalu) tem o cabeçalho
-    numa linha diferente e 2 colunas a menos antes do bloco de QT./
-    MEDIÇÃO (menos colunas descritivas que a da AXA) — a coluna da
-    rodada 1 cai em N (14), não em P (16). O preenchimento tem que
-    achar a coluna certa pelo texto do cabeçalho, não por posição
-    fixa, senão escreve no lugar errado (como aconteceu de verdade)."""
+    """Bug real: a planilha de outro cliente tem o cabeçalho numa linha
+    diferente e 2 colunas a menos antes do bloco de QT./MEDIÇÃO (menos
+    colunas descritivas que o layout padrão usado nos outros testes) —
+    a coluna da rodada 1 cai em N (14), não em P (16). O preenchimento
+    tem que achar a coluna certa pelo texto do cabeçalho, não por
+    posição fixa, senão escreve no lugar errado (como aconteceu de
+    verdade)."""
     header_row = 8
     rodada_cols = {1: 14, 2: 17, 3: 20, 4: 23}  # N, Q, T, W
     wb = _wb_com_linhas(
@@ -163,7 +164,7 @@ def test_funciona_com_planilha_de_layout_diferente():
 
     ws = wb.active
     assert ws.cell(row=9, column=14).value == 0.9   # coluna certa (N)
-    assert ws.cell(row=9, column=16).value is None  # não pode cair na coluna da AXA (P)
+    assert ws.cell(row=9, column=16).value is None  # não pode cair na coluna do layout padrão (P)
     assert avisos == []
 
 

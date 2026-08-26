@@ -10,8 +10,8 @@ profissional. Sem os vereditos de IA (o usuário pediu explicitamente pra
 não incluir, pra ficar fiel ao conteúdo do relatório original). Sem
 gerar dependência pesada no deploy (Render free tier).
 
-Exemplo de referência: PDF anexado pelo usuário (RDO nº 1, obra "07604 AXA
-- SECURITY (BIOMETRIA)").
+Exemplo de referência: PDF anexado pelo usuário (RDO nº 1, obra de um
+cliente real usado como modelo).
 
 ## Decisões já tomadas (aprovadas pelo usuário)
 

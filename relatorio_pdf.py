@@ -177,8 +177,9 @@ def _caixa_imagem_obra(dados_img: bytes, largura_caixa: float, altura_caixa: flo
         return None
     # Sem fundo/moldura: a logo do cliente fica "solta" sobre o branco da
     # página — colocar uma caixa cinza atrás dela cria uma borda visível
-    # em volta de logos com fundo próprio (ex.: fundo azul da AXA), o que
-    # fica com cara de retalho colado em vez de parte do cabeçalho.
+    # em volta de logos com fundo próprio (ex.: fundo colorido de um
+    # cliente específico), o que fica com cara de retalho colado em vez
+    # de parte do cabeçalho.
     caixa = Table([[img]], colWidths=[largura_caixa])
     caixa.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
