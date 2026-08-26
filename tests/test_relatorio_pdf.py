@@ -168,3 +168,48 @@ def test_gerar_pdf_com_muitas_fotos_em_alta_resolucao_fica_pequeno():
     # cada uma incorporada; com a redução, o PDF inteiro fica na casa de
     # poucos MB.
     assert len(pdf) < 20 * 1024 * 1024
+
+
+def test_dpi_para_quantidade_da_mais_nitidez_com_poucas_fotos():
+    """Relatório pequeno (cabe folgado na memória) ganha a resolução
+    máxima em vez de já sair no valor conservador usado pra relatórios
+    grandes."""
+    assert rp._dpi_para_quantidade(1) == 200
+    assert rp._dpi_para_quantidade(100) == 200
+
+
+def test_dpi_para_quantidade_reduz_conforme_cresce():
+    """A resolução só cai à medida que a quantidade de fotos cresce — é
+    uma escada, nunca aumenta com mais fotos."""
+    pontos = [1, 50, 100, 101, 250, 251, 450, 451, 800, 801, 5000]
+    dpis = [rp._dpi_para_quantidade(n) for n in pontos]
+    assert dpis == sorted(dpis, reverse=True)  # nunca sobe
+    assert rp._dpi_para_quantidade(365) == 100  # calibração real (~170MB)
+    assert dpis[-1] >= 30  # nunca fica ilegível, mesmo em relatórios enormes
+
+
+def test_gerar_pdf_usa_dpi_maior_com_poucas_fotos():
+    """Ponta a ponta: um relatório com poucas fotos tem que produzir
+    cards em resolução mais alta que um relatório com muitas — trava que
+    o DPI adaptativo está realmente conectado ao pipeline, não só
+    calculado e descartado."""
+    cabecalho, atividades, _, _ = _dados_exemplo()
+    foto_grande = _jpeg_sintetico(4000, 3000)
+
+    def _relatorio_com_n_fotos(n):
+        tarefas = [
+            {"codigo": f"A{i}", "descricao": f"TAREFA {i}",
+             "fotos": [lambda d=foto_grande: d]}
+            for i in range(n)
+        ]
+        grupos_fotos = [{"letra": "a", "desc": "PRÉ-OBRA", "tarefas": tarefas}]
+        resumo = {"tarefas": n, "fotos": n, "grupos": 1}
+        return rp.gerar_pdf(cabecalho, atividades, resumo, grupos_fotos,
+                            "25/08/2026 10:00")
+
+    pdf_poucas = _relatorio_com_n_fotos(2)   # <= 100 -> 200 DPI
+    pdf_muitas = _relatorio_com_n_fotos(120)  # 101-250 -> 150 DPI
+
+    # Mesma foto de origem em ambos; com poucas fotos o DPI é maior, então
+    # o PDF por-foto sai maior mesmo comprimido.
+    assert (len(pdf_poucas) / 2) > (len(pdf_muitas) / 120)

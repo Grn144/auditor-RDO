@@ -511,6 +511,22 @@ def _montar_grupos_fotos(zf: zipfile.ZipFile, fotos_meta: list[dict]) -> list[di
             "tarefas": list(grupos[k]["tarefas"].values())} for k in ordem]
 
 
+def _resumo_pdf(atividades: list[dict], fotos_meta: list[dict]) -> dict:
+    """Números da faixa de resumo do cabeçalho do PDF.
+
+    "tarefas" e "grupos" usam o total REAL da obra (`atividades` — a
+    mesma lista completa que vira a tabela de ATIVIDADES, com ou sem
+    foto), não só o que foi fotografado — senão o resumo mostra um
+    número menor que a própria tabela logo abaixo dele. Só cai pra
+    contar via `fotos_meta` se `atividades` vier vazio (ex.: falha ao
+    buscar o cabeçalho da obra), pra não mostrar "0 tarefas" tendo foto."""
+    return {
+        "tarefas": len(atividades) or len({(m["subpasta"], m["codigo"]) for m in fotos_meta}),
+        "fotos": len(fotos_meta),
+        "grupos": len({a["grupo"] for a in atividades}) or len({m["subpasta"] for m in fotos_meta}),
+    }
+
+
 @app.route("/api/pdf/<zid>")
 def api_pdf(zid):
     entry = _zips.get(zid)
@@ -537,11 +553,7 @@ def api_pdf(zid):
             imagem_obra = None
 
     try:
-        resumo = {
-            "tarefas": len({(m["subpasta"], m["codigo"]) for m in fotos_meta}),
-            "fotos": len(fotos_meta),
-            "grupos": len({m["subpasta"] for m in fotos_meta}),
-        }
+        resumo = _resumo_pdf(atividades, fotos_meta)
         gerado_em = datetime.now().strftime("%d/%m/%Y %H:%M")
         # O zip precisa continuar aberto durante toda a montagem do PDF:
         # cada foto só é lida dele no momento em que o card é desenhado

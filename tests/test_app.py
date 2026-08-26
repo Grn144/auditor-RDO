@@ -239,6 +239,53 @@ def test_pdf_rota_gera_relatorio_valido(app_module, tmp_path):
     assert "obra_teste.pdf" in resp.headers.get("Content-Disposition", "")
 
 
+def test_resumo_pdf_conta_total_de_tarefas_nao_so_as_fotografadas(app_module):
+    """Bug reportado: numa obra com 314 tarefas no total mas só algumas
+    com foto, o resumo do PDF mostrava só a contagem das fotografadas —
+    um número menor que a própria tabela de ATIVIDADES logo abaixo, que
+    lista as 314. "tarefas"/"grupos" tem que refletir o total real da
+    obra (vem de `atividades`, não de `fotos_meta`)."""
+    mod = app_module(usuarios=None)
+    atividades = (
+        [{"grupo": "A", "grupo_desc": "PRÉ-OBRA", "codigo": str(i),
+          "descricao": f"TAREFA {i}", "porcentagem": 100,
+          "quantidade": 1, "unidade": "VB"} for i in range(1, 301)]
+        + [{"grupo": "B", "grupo_desc": "DADOS", "codigo": str(i),
+            "descricao": f"TAREFA B{i}", "porcentagem": 0,
+            "quantidade": None, "unidade": None} for i in range(1, 15)]
+    )
+    assert len(atividades) == 314
+    # só 2 dessas 314 tarefas têm foto de verdade
+    fotos_meta = [
+        {"codigo": "1", "descricao": "TAREFA 1", "subpasta": "a",
+         "grupo_desc": "PRÉ-OBRA", "nome_arquivo": "A1.jpg"},
+        {"codigo": "2", "descricao": "TAREFA 2", "subpasta": "a",
+         "grupo_desc": "PRÉ-OBRA", "nome_arquivo": "A2.jpg"},
+    ]
+
+    resumo = mod._resumo_pdf(atividades, fotos_meta)
+
+    assert resumo["tarefas"] == 314
+    assert resumo["grupos"] == 2  # A e B, não só "a" (grupo das fotografadas)
+    assert resumo["fotos"] == 2
+
+
+def test_resumo_pdf_cai_pra_contagem_por_foto_se_atividades_vier_vazio(app_module):
+    """Se por algum motivo o cabeçalho da obra não veio (`atividades`
+    vazio), o resumo não pode mostrar "0 tarefas" tendo foto — cai pra
+    contar pelas fotos mesmo, como fazia antes."""
+    mod = app_module(usuarios=None)
+    fotos_meta = [
+        {"codigo": "1", "descricao": "TAREFA 1", "subpasta": "a",
+         "grupo_desc": "PRÉ-OBRA", "nome_arquivo": "A1.jpg"},
+    ]
+
+    resumo = mod._resumo_pdf([], fotos_meta)
+
+    assert resumo["tarefas"] == 1
+    assert resumo["grupos"] == 1
+
+
 def test_pdf_id_desconhecido_da_404(app_module):
     mod = app_module(usuarios=None)
     cliente = mod.app.test_client()

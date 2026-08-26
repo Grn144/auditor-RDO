@@ -37,18 +37,36 @@ LOGO_PATH = Path(__file__).parent / "static" / "officez_logo.png"
 MARGEM = 18 * mm
 SELO_LARGURA = 34 * mm  # selo de status na tabela de atividades ("Concluída · 100%")
 
-# DPI alvo pra qualquer imagem embutida no PDF (fotos e logo da obra) —
-# um único padrão, igual pra todo relatório. Descoberto na prática
+# DPI da logo/imagem da obra no cabeçalho — só UMA imagem por relatório,
+# então não pesa na memória; fica sempre nítida.
+DPI_LOGO_OBRA = 150
+
+# Faixas de DPI das FOTOS conforme a quantidade no relatório: poucas
+# fotos ganham mais nitidez; muitas fotos reduzem a resolução pra não
+# estourar a memória do Render free tier (512MB). Descoberto na prática
 # (medindo RSS real do processo, não só o que o tracemalloc enxerga): o
-# próprio ReportLab retém internamente uma cópia por imagem desenhada
-# até o documento inteiro terminar de ser montado — não é só o
-# processamento em si. Isso escala com o Nº de pixels que cada imagem
-# tem ao ser desenhada, então mais que o corte/resize, é ESSE valor que
-# decide o pico de memória em relatórios com centenas de fotos. 100 DPI
-# mede ~166MB pra 365 fotos de câmera de celular (contra ~538MB a
-# 200 DPI) — ainda nítido o suficiente pro card de ~8cm, com boa margem
-# dentro dos 512MB do Render free tier.
-DPI_IMAGEM = 100
+# próprio ReportLab retém internamente uma cópia de cada imagem desenhada
+# até o documento inteiro terminar de ser montado — escala com o Nº de
+# pixels de cada imagem × quantas fotos tem, não com o processamento em
+# si. Faixas calibradas com medição real:
+#   365 fotos a 200 DPI -> ~538MB (estoura)
+#   365 fotos a 100 DPI -> ~170MB (seguro, com boa margem)
+_FAIXAS_DPI_FOTOS = [
+    (100, 200),   # até 100 fotos: nitidez máxima, memória é folgada
+    (250, 150),
+    (450, 100),   # calibrado com medição real (365 fotos ≈ 170MB)
+    (800, 70),
+    (float("inf"), 50),  # relatórios enormes: pior qualidade, mas seguro
+]
+
+
+def _dpi_para_quantidade(n_fotos: int) -> int:
+    """Escolhe o DPI das fotos de acordo com quantas existem no
+    relatório — ver `_FAIXAS_DPI_FOTOS` pra calibração/raciocínio."""
+    for limite, dpi in _FAIXAS_DPI_FOTOS:
+        if n_fotos <= limite:
+            return dpi
+    return _FAIXAS_DPI_FOTOS[-1][1]  # inalcançável (última faixa é inf), só por segurança
 
 _styles = getSampleStyleSheet()
 ESTILO_LABEL = ParagraphStyle(
@@ -150,8 +168,8 @@ def _caixa_imagem_obra(dados_img: bytes, largura_caixa: float, altura_caixa: flo
         nl, na = leitor.getSize()
         escala = min(largura_caixa / nl, altura_caixa / na)
         w, h = nl * escala, na * escala
-        largura_px = max(1, round(w / 72 * DPI_IMAGEM))
-        altura_px = max(1, round(h / 72 * DPI_IMAGEM))
+        largura_px = max(1, round(w / 72 * DPI_LOGO_OBRA))
+        altura_px = max(1, round(h / 72 * DPI_LOGO_OBRA))
         reduzida = _reduzir_para_exibicao(dados_img, largura_px, altura_px)
         img = Image(io.BytesIO(reduzida), width=w, height=h)
         img.hAlign = "CENTER"
@@ -389,7 +407,8 @@ class _CardFoto(Flowable):
     COR_SOMBRA = colors.Color(0.06, 0.09, 0.16, alpha=0.08)
 
     def __init__(self, carregar_img: "Optional[Callable[[], Optional[bytes]]]",
-                rotulo_id: str, titulo: str, largura: float, altura_imagem: float):
+                rotulo_id: str, titulo: str, largura: float, altura_imagem: float,
+                dpi: int = 100):
         super().__init__()
         # Recebe uma FUNÇÃO que busca os bytes da foto, em vez dos bytes já
         # prontos: assim a imagem só é lida (do zip) no momento de desenhar
@@ -400,6 +419,10 @@ class _CardFoto(Flowable):
         self.rotulo_id = rotulo_id
         self.largura = largura
         self.altura_imagem = altura_imagem
+        # DPI já resolvido pelo chamador (`_dpi_para_quantidade`, com base
+        # no total de fotos do relatório) — poucas fotos, mais nitidez;
+        # muitas fotos, resolução menor pra caber na memória.
+        self.dpi = dpi
         largura_texto = largura - 2 * self.PAD_TEXTO
         self._paragrafo = Paragraph(titulo or "—", ESTILO_CARD_TITULO)
         _, altura_paragrafo = self._paragrafo.wrap(largura_texto, 999 * mm)
@@ -442,8 +465,8 @@ class _CardFoto(Flowable):
         dados_img = self.carregar_img() if self.carregar_img else None
         if dados_img:
             try:
-                largura_px = max(1, round(w / 72 * DPI_IMAGEM))
-                altura_px = max(1, round(self.altura_imagem / 72 * DPI_IMAGEM))
+                largura_px = max(1, round(w / 72 * self.dpi))
+                altura_px = max(1, round(self.altura_imagem / 72 * self.dpi))
                 cortada = _cortar_para_preencher(dados_img, w / self.altura_imagem,
                                                  largura_px, altura_px)
                 # mask="auto" faz o ReportLab reabrir/reprocessar a imagem
@@ -507,6 +530,9 @@ def _bloco_fotos(grupos_fotos: list[dict]) -> list:
     largura_card = largura_util / 2 - 3 * mm
     altura_imagem = 50 * mm
 
+    total_fotos = sum(len(t["fotos"]) for g in grupos_fotos for t in g["tarefas"])
+    dpi = _dpi_para_quantidade(total_fotos)
+
     for grupo in grupos_fotos:
         titulo = f"{grupo['letra']} — {grupo['desc']}" if grupo["desc"] else grupo["letra"]
         cabecalho_grupo = Table([[Paragraph(titulo, ESTILO_GRUPO)]],
@@ -527,7 +553,7 @@ def _bloco_fotos(grupos_fotos: list[dict]) -> list:
                 rotulo_id = f"{tarefa['codigo']} • Foto {n:02d}"
                 cards_linha.append(_CardFoto(carregar_img, rotulo_id,
                                              tarefa["descricao"],
-                                             largura_card, altura_imagem))
+                                             largura_card, altura_imagem, dpi=dpi))
                 if len(cards_linha) == 2:
                     elementos.append(_linha_de_cards(cards_linha, largura_util))
                     cards_linha = []
