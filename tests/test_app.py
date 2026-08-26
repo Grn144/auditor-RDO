@@ -1,7 +1,10 @@
 import importlib
+import io
 import json
 import time
+import urllib.parse
 
+import openpyxl
 import pytest
 from werkzeug.security import generate_password_hash
 
@@ -237,6 +240,144 @@ def test_pdf_rota_gera_relatorio_valido(app_module, tmp_path):
     assert resp.data[:5] == b"%PDF-"
     assert resp.headers["Content-Type"] == "application/pdf"
     assert "obra_teste.pdf" in resp.headers.get("Content-Disposition", "")
+
+
+def _planilha_medicao_teste_bytes():
+    """Um .xlsx mínimo no formato esperado: 1 item (grupo A, item 1) na
+    linha 8, sem nenhuma rodada ainda lançada."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.cell(row=8, column=1, value="A")
+    ws.cell(row=8, column=2, value="1")
+    ws.cell(row=8, column=3, value="ITEM A1")
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf
+
+
+def _preparar_zip_obra(mod, tmp_path, atividades):
+    pasta = tmp_path / "fotos_teste"
+    (pasta / "a").mkdir(parents=True)
+    (pasta / "a" / "A1.jpg").write_bytes(b"fake-jpg-bytes")
+    zid = mod._zipar_diretorio(pasta, "obra_teste")
+    mod._zips[zid]["info"] = {
+        "modo": "obra",
+        "cabecalho": {"nome": "OBRA TESTE", "cliente": "ACME"},
+        "atividades": atividades,
+        "nome_arquivo": "obra_teste",
+    }
+    return zid
+
+
+def test_planilha_medicao_rota_preenche_e_baixa_xlsx_atualizado(app_module, tmp_path):
+    mod = app_module(usuarios=None)
+    atividades = [{"grupo": "A", "grupo_desc": "PRÉ-OBRA", "codigo": "1",
+                   "descricao": "TAREFA 1", "porcentagem": 100,
+                   "quantidade": 2, "unidade": "UNID"}]
+    zid = _preparar_zip_obra(mod, tmp_path, atividades)
+
+    cliente = mod.app.test_client()
+    resp = cliente.post(
+        f"/api/planilha-medicao/{zid}",
+        data={"rodada": "1", "planilha": (_planilha_medicao_teste_bytes(), "medicao.xlsx")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 200
+    assert "medicao" in resp.headers.get("Content-Disposition", "")
+    wb = openpyxl.load_workbook(io.BytesIO(resp.data))
+    assert wb.active.cell(row=8, column=16).value == 2.0  # coluna P = QT. medição 01
+    avisos = json.loads(urllib.parse.unquote(resp.headers["X-Avisos"]))
+    assert avisos == []
+
+
+def test_planilha_medicao_rota_exige_modo_obra(app_module, tmp_path):
+    mod = app_module(usuarios=None)
+    pasta = tmp_path / "fotos_teste"
+    pasta.mkdir()
+    zid = mod._zipar_diretorio(pasta, "relatorio_teste")
+    mod._zips[zid]["info"] = {"modo": "relatorio"}
+
+    cliente = mod.app.test_client()
+    resp = cliente.post(
+        f"/api/planilha-medicao/{zid}",
+        data={"rodada": "1", "planilha": (_planilha_medicao_teste_bytes(), "medicao.xlsx")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 400
+
+
+def test_planilha_medicao_rota_rejeita_rodada_invalida(app_module, tmp_path):
+    mod = app_module(usuarios=None)
+    zid = _preparar_zip_obra(mod, tmp_path, atividades=[])
+
+    cliente = mod.app.test_client()
+    resp = cliente.post(
+        f"/api/planilha-medicao/{zid}",
+        data={"rodada": "9", "planilha": (_planilha_medicao_teste_bytes(), "medicao.xlsx")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 400
+
+
+def test_planilha_medicao_rota_exige_arquivo(app_module, tmp_path):
+    mod = app_module(usuarios=None)
+    zid = _preparar_zip_obra(mod, tmp_path, atividades=[])
+
+    cliente = mod.app.test_client()
+    resp = cliente.post(f"/api/planilha-medicao/{zid}", data={"rodada": "1"},
+                        content_type="multipart/form-data")
+
+    assert resp.status_code == 400
+
+
+def test_planilha_medicao_rota_limita_avisos_no_cabecalho(app_module, tmp_path):
+    """Cabeçalho HTTP não é lugar pra uma lista sem limite — obras com
+    dezenas de itens sem correspondência não podem estourar o cabeçalho."""
+    mod = app_module(usuarios=None)
+    # 60 tarefas no app, nenhuma bate com a única linha da planilha de teste.
+    atividades = [{"grupo": "Z", "grupo_desc": "OUTRO", "codigo": str(i),
+                   "descricao": f"TAREFA {i}", "porcentagem": 50,
+                   "quantidade": 1, "unidade": "UNID"} for i in range(1, 61)]
+    zid = _preparar_zip_obra(mod, tmp_path, atividades)
+
+    cliente = mod.app.test_client()
+    resp = cliente.post(
+        f"/api/planilha-medicao/{zid}",
+        data={"rodada": "1", "planilha": (_planilha_medicao_teste_bytes(), "medicao.xlsx")},
+        content_type="multipart/form-data",
+    )
+
+    assert resp.status_code == 200
+    avisos = json.loads(urllib.parse.unquote(resp.headers["X-Avisos"]))
+    assert len(avisos) <= 41  # limite + 1 linha de resumo
+    assert "mais" in avisos[-1]
+
+
+def test_planilha_medicao_rota_exige_login_quando_usuarios_configurados(app_module):
+    """Pina que o before_request cobre /api/planilha-medicao/<id> também:
+    um id inexistente já deve ser barrado pelo login, antes de a rota
+    sequer rodar."""
+    mod = app_module(usuarios={"joao": "segredo123"})
+    cliente = mod.app.test_client()
+    resp = cliente.post("/api/planilha-medicao/nao-existe-e-nao-importa",
+                        data={"rodada": "1"}, follow_redirects=False)
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+
+
+def test_planilha_medicao_rota_zid_desconhecido_da_404(app_module):
+    mod = app_module(usuarios=None)
+    cliente = mod.app.test_client()
+    resp = cliente.post(
+        "/api/planilha-medicao/nao-existe",
+        data={"rodada": "1", "planilha": (_planilha_medicao_teste_bytes(), "medicao.xlsx")},
+        content_type="multipart/form-data",
+    )
+    assert resp.status_code == 404
 
 
 def test_resumo_pdf_conta_total_de_tarefas_nao_so_as_fotografadas(app_module):

@@ -11,6 +11,7 @@ truststore>=0.9.0    # usa a store de certificados do Windows (evita erro de SSL
 certifi>=2024.0.0    # cadeia de certificados alternativa (reserva do truststore)
 pillow>=10.0.0       # redimensiona as fotos antes de enviar à IA
 reportlab>=4.0.0     # gera o relatório de obra em PDF (só Python, sem dependência de sistema)
+openpyxl>=3.1.0      # preenche a planilha de medição (.xlsx) com o progresso das tarefas
 
 # Só para auditoria por IA com o provedor Anthropic/Claude (pago):
 anthropic>=1.0.0

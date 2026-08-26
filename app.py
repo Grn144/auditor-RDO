@@ -44,7 +44,10 @@ from flask import (Flask, Response, jsonify, redirect, request,
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 
+import openpyxl
+
 import auditar_relatorio as core
+import planilha_medicao
 import relatorio_pdf
 
 app = Flask(__name__)
@@ -569,6 +572,65 @@ def api_pdf(zid):
     nome_pdf = info.get("nome_arquivo", entry["nome"].rsplit(".", 1)[0]) + ".pdf"
     return send_file(io.BytesIO(pdf_bytes), as_attachment=True,
                      download_name=nome_pdf, mimetype="application/pdf")
+
+
+_LIMITE_AVISOS_HEADER = 40  # cabeçalho HTTP não é lugar pra uma lista sem limite
+
+
+def _avisos_para_header(avisos: list[str]) -> str:
+    if len(avisos) > _LIMITE_AVISOS_HEADER:
+        restantes = len(avisos) - _LIMITE_AVISOS_HEADER
+        avisos = avisos[:_LIMITE_AVISOS_HEADER] + [
+            f"... e mais {restantes} aviso(s) (confira a planilha)."]
+    return urllib.parse.quote(json.dumps(avisos, ensure_ascii=False))
+
+
+@app.route("/api/planilha-medicao/<zid>", methods=["POST"])
+def api_planilha_medicao(zid):
+    """Recebe a planilha de medição (.xlsx) já usada na obra + a rodada
+    (1-4) a preencher, e devolve o mesmo arquivo com a coluna QT. daquela
+    rodada preenchida a partir do progresso atual das tarefas no Diário
+    de Obra (ver `planilha_medicao.preencher_medicao`). Os avisos (itens
+    sem correspondência, incremento negativo etc.) vão no cabeçalho
+    X-Avisos, percent-encoded (JSON em UTF-8) — o cabeçalho HTTP só
+    aceita ASCII."""
+    entry = _zips.get(zid)
+    if not entry or not Path(entry["caminho"]).exists():
+        return "Arquivo não encontrado (pode ter expirado).", 404
+
+    info = entry.get("info") or {}
+    if info.get("modo") != "obra":
+        return ("Planilha de medição disponível só para o modo \"obra "
+                "completa\" por enquanto.", 400)
+
+    try:
+        rodada = int(request.form.get("rodada", ""))
+    except ValueError:
+        rodada = 0
+    if rodada not in planilha_medicao.RODADA_COLUNAS:
+        return "Rodada de medição inválida (use 1, 2, 3 ou 4).", 400
+
+    arquivo = request.files.get("planilha")
+    if not arquivo or not arquivo.filename:
+        return "Envie o arquivo .xlsx da planilha de medição.", 400
+
+    atividades = info.get("atividades") or []
+    try:
+        wb = openpyxl.load_workbook(arquivo.stream)
+        avisos = planilha_medicao.preencher_medicao(wb, atividades, rodada)
+        saida = io.BytesIO()
+        wb.save(saida)
+        saida.seek(0)
+    except Exception as e:  # noqa: BLE001 — erro no arquivo enviado, não trava o servidor
+        return f"Erro ao processar a planilha: {e}", 500
+
+    nome_saida = Path(arquivo.filename).stem + f"_medicao{rodada:02d}.xlsx"
+    resp = send_file(
+        saida, as_attachment=True, download_name=nome_saida,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    resp.headers["X-Avisos"] = _avisos_para_header(avisos)
+    resp.headers["Access-Control-Expose-Headers"] = "X-Avisos"
+    return resp
 
 
 def _abrir_navegador(url: str) -> None:

@@ -349,6 +349,31 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
         <div class="row">
           <button class="btn btn-primary" id="btnZip">⬇ Baixar .zip (fotos + auditoria.csv)</button>
           <button class="btn btn-ghost hidden" id="btnPdf">⬇ Baixar relatório PDF</button>
+          <button class="btn btn-ghost hidden" id="btnPlanilhaToggle">📊 Gerar planilha de medição</button>
+        </div>
+
+        <div class="hidden" id="planilhaPanel" style="margin-top:12px">
+          <div class="row">
+            <label class="field" style="flex:2;min-width:220px;margin:0">
+              <span class="lab">Planilha de medição atual (.xlsx)</span>
+              <input type="file" id="planilhaArquivo" accept=".xlsx">
+            </label>
+            <label class="field" style="flex:1;min-width:140px;margin:0">
+              <span class="lab">Rodada a preencher</span>
+              <select id="planilhaRodada">
+                <option value="1">Medição 01</option>
+                <option value="2">Medição 02</option>
+                <option value="3">Medição 03</option>
+                <option value="4">Medição 04</option>
+              </select>
+            </label>
+          </div>
+          <div class="row">
+            <button class="btn btn-primary" id="btnPlanilhaGerar">
+              <span class="spinner"></span> <span>Gerar e baixar</span>
+            </button>
+          </div>
+          <div class="hint" id="planilhaAvisos"></div>
         </div>
       </div>
 
@@ -582,6 +607,7 @@ function handleEvent(ev){
   else if(ev.tipo==="fim"){ ESTADO.zipId=ev.zip_id;
     logln("Concluído."); renderResumo(ev.resumo); $("#cardResult").classList.remove("hidden");
     $("#btnPdf").classList.toggle("hidden", ESTADO.modo!=="obra");
+    $("#btnPlanilhaToggle").classList.toggle("hidden", ESTADO.modo!=="obra");
     $("#cardResult").scrollIntoView({behavior:"smooth",block:"start"});
     if(ESTADO.pdfAutomatico){
       ESTADO.pdfAutomatico = false;
@@ -623,8 +649,45 @@ function renderResumo(r){
 
 $("#btnZip").onclick=()=>{ if(ESTADO.zipId) location.href="/api/zip/"+ESTADO.zipId; };
 $("#btnPdf").onclick=()=>{ if(ESTADO.zipId) location.href="/api/pdf/"+ESTADO.zipId; };
+
+$("#btnPlanilhaToggle").onclick=()=>{ $("#planilhaPanel").classList.toggle("hidden"); };
+
+$("#btnPlanilhaGerar").onclick=async()=>{
+  const arquivo = $("#planilhaArquivo").files[0];
+  if(!arquivo){ toast("Escolha o arquivo .xlsx da planilha de medição."); return; }
+  if(!ESTADO.zipId){ toast("Nenhum relatório carregado."); return; }
+  const btn = $("#btnPlanilhaGerar");
+  loading(btn, true);
+  $("#planilhaAvisos").innerHTML = "";
+  try{
+    const fd = new FormData();
+    fd.append("planilha", arquivo);
+    fd.append("rodada", $("#planilhaRodada").value);
+    const resp = await fetch("/api/planilha-medicao/"+ESTADO.zipId, {method:"POST", body:fd});
+    if(!resp.ok){ toast("Erro: "+await resp.text()); return; }
+
+    const blob = await resp.blob();
+    const cd = resp.headers.get("Content-Disposition") || "";
+    const nomeMatch = cd.match(/filename="?([^";]+)"?/);
+    const nomeArquivo = nomeMatch ? nomeMatch[1] : "planilha_medicao.xlsx";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = nomeArquivo;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+
+    const avisosHeader = resp.headers.get("X-Avisos");
+    const avisos = avisosHeader ? JSON.parse(decodeURIComponent(avisosHeader)) : [];
+    $("#planilhaAvisos").innerHTML = avisos.length
+      ? `⚠ ${avisos.length} aviso(s):<br>` + avisos.map(esc).join("<br>")
+      : "Planilha gerada sem avisos.";
+  }catch(e){ toast("Erro ao gerar a planilha: "+e); }
+  finally{ loading(btn, false); }
+};
+
 $("#btnTrocar").onclick=()=>{ $("#cardReport").classList.add("hidden");
   $("#cardProgress").classList.add("hidden"); $("#cardResult").classList.add("hidden");
+  $("#planilhaPanel").classList.add("hidden"); $("#planilhaAvisos").innerHTML="";
   $("#galeria").innerHTML=""; $("#pageTitulo").textContent="Auditor RDO";
   $("#cardConfig").scrollIntoView({behavior:"smooth"}); };
 </script>
