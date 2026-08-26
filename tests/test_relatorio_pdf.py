@@ -27,7 +27,10 @@ def _dados_exemplo():
     grupos_fotos = [
         {"letra": "a", "desc": "PRÉ-OBRA", "tarefas": [
             {"codigo": "A1", "descricao": "TAREFA 1",
-             "fotos": [LOGO.read_bytes(), None]},
+             # cada foto é uma FUNÇÃO que devolve os bytes, não os bytes
+             # em si — é assim que o app.py passa (leitura preguiçosa do
+             # zip, uma foto de cada vez, pra não estourar memória).
+             "fotos": [LOGO.read_bytes, None]},
         ]},
     ]
     return cabecalho, atividades, resumo, grupos_fotos
@@ -62,3 +65,31 @@ def test_gerar_pdf_com_imagem_da_obra_invalida_nao_quebra():
     pdf = rp.gerar_pdf(cabecalho, atividades, resumo, grupos_fotos,
                        "25/08/2026 10:00", imagem_obra=b"nao-e-uma-imagem")
     assert pdf[:5] == b"%PDF-"
+
+
+def test_fotos_sao_lidas_sob_demanda_nao_de_uma_vez():
+    """Trava o ponto central da correção de memória: a função que busca a
+    foto só pode ser chamada quando o card é efetivamente desenhado — se
+    `gerar_pdf` (ou algo no meio do caminho) lesse tudo de antemão, o
+    contador teria mais de 1 chamada por foto antes mesmo de `gerar_pdf`
+    rodar, ou o app.py ficaria obrigado a manter todos os bytes na
+    memória ao mesmo tempo (o que é exatamente o que essa mudança evita)."""
+    cabecalho, atividades, resumo, _ = _dados_exemplo()
+    chamadas = []
+
+    def carregar():
+        chamadas.append(1)
+        return LOGO.read_bytes()
+
+    grupos_fotos = [
+        {"letra": "a", "desc": "PRÉ-OBRA", "tarefas": [
+            {"codigo": "A1", "descricao": "TAREFA 1", "fotos": [carregar]},
+        ]},
+    ]
+    assert chamadas == []  # nada foi lido só por montar a estrutura
+
+    pdf = rp.gerar_pdf(cabecalho, atividades, resumo, grupos_fotos,
+                       "25/08/2026 10:00")
+
+    assert pdf[:5] == b"%PDF-"
+    assert chamadas == [1]  # lida exatamente uma vez, na hora de desenhar

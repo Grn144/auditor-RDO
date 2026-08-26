@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from PIL import Image as PILImage
 from reportlab.lib import colors
@@ -338,10 +338,15 @@ class _CardFoto(Flowable):
     COR_ETIQUETA = colors.Color(0.06, 0.09, 0.16, alpha=0.72)
     COR_SOMBRA = colors.Color(0.06, 0.09, 0.16, alpha=0.08)
 
-    def __init__(self, dados_img: Optional[bytes], rotulo_id: str,
-                titulo: str, largura: float, altura_imagem: float):
+    def __init__(self, carregar_img: "Optional[Callable[[], Optional[bytes]]]",
+                rotulo_id: str, titulo: str, largura: float, altura_imagem: float):
         super().__init__()
-        self.dados_img = dados_img
+        # Recebe uma FUNÇÃO que busca os bytes da foto, em vez dos bytes já
+        # prontos: assim a imagem só é lida (do zip) no momento de desenhar
+        # o card, uma de cada vez — com relatórios de centenas de fotos,
+        # carregar tudo de uma vez na lista de cards estourava a memória do
+        # Render free tier (512MB).
+        self.carregar_img = carregar_img
         self.rotulo_id = rotulo_id
         self.largura = largura
         self.altura_imagem = altura_imagem
@@ -384,9 +389,10 @@ class _CardFoto(Flowable):
 
     def _desenhar_imagem(self, c, w, h):
         y_img = h - self.altura_imagem
-        if self.dados_img:
+        dados_img = self.carregar_img() if self.carregar_img else None
+        if dados_img:
             try:
-                cortada = _cortar_para_preencher(self.dados_img, w / self.altura_imagem)
+                cortada = _cortar_para_preencher(dados_img, w / self.altura_imagem)
                 c.drawImage(ImageReader(io.BytesIO(cortada)), 0, y_img,
                            width=w, height=self.altura_imagem, mask="auto")
                 return
@@ -431,7 +437,10 @@ def _linha_de_cards(cards: list, largura_util: float) -> Table:
 
 def _bloco_fotos(grupos_fotos: list[dict]) -> list:
     """`grupos_fotos`: lista de {letra, desc, tarefas: [{codigo, descricao,
-    fotos: [bytes|None, ...]}]} — já vem organizada nessa ordem."""
+    fotos: [carregar_img, ...]}]} — já vem organizada nessa ordem. Cada
+    `carregar_img` é uma função sem argumentos que retorna os bytes da
+    foto (ou None) quando chamada — a leitura é adiada pra hora de
+    desenhar o card, não acontece aqui."""
     elementos = [Paragraph("FOTOS", ESTILO_SUPRA), Spacer(1, 2 * mm)]
     largura_util = A4[0] - 2 * MARGEM
     largura_card = largura_util / 2 - 3 * mm
@@ -453,9 +462,9 @@ def _bloco_fotos(grupos_fotos: list[dict]) -> list:
         cards_linha: list = []
         for tarefa in grupo["tarefas"]:
             fotos = tarefa["fotos"] or [None]
-            for n, dados_img in enumerate(fotos, start=1):
+            for n, carregar_img in enumerate(fotos, start=1):
                 rotulo_id = f"{tarefa['codigo']} • Foto {n:02d}"
-                cards_linha.append(_CardFoto(dados_img, rotulo_id,
+                cards_linha.append(_CardFoto(carregar_img, rotulo_id,
                                              tarefa["descricao"],
                                              largura_card, altura_imagem))
                 if len(cards_linha) == 2:

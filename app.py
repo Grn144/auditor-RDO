@@ -476,30 +476,37 @@ def api_zip(zid):
                      download_name=info["nome"])
 
 
-def _montar_grupos_fotos(caminho_zip: Path, fotos_meta: list[dict]) -> list[dict]:
-    """Reagrupa as fotos já baixadas (guardadas no zip) por grupo/tarefa,
-    lendo os bytes de cada uma direto do zip (sem rebaixar nada)."""
+def _montar_grupos_fotos(zf: zipfile.ZipFile, fotos_meta: list[dict]) -> list[dict]:
+    """Reagrupa as fotos já baixadas (guardadas no zip) por grupo/tarefa.
+
+    Não lê nenhum byte de imagem aqui — cada entrada de foto vira uma
+    FUNÇÃO que lê do zip só quando chamada. `zf` precisa continuar aberto
+    enquanto o PDF é montado (é o chamador que garante isso). Ler tudo de
+    uma vez numa lista, como fazia antes, estourava a memória do Render
+    free tier (512MB) em relatórios com centenas de fotos."""
     grupos: dict[str, dict] = {}
     ordem: list[str] = []
-    with zipfile.ZipFile(caminho_zip) as zf:
-        for m in fotos_meta:
-            chave = m["subpasta"] or "sem_grupo"
-            if chave not in grupos:
-                grupos[chave] = {"letra": chave, "desc": m.get("grupo_desc", ""),
-                                 "tarefas": {}}
-                ordem.append(chave)
-            tarefas = grupos[chave]["tarefas"]
-            cod = m["codigo"]
-            if cod not in tarefas:
-                tarefas[cod] = {"codigo": f"{chave.upper()}{cod}",
-                                "descricao": m["descricao"], "fotos": []}
-            caminho_interno = (f"{m['subpasta']}/{m['nome_arquivo']}"
-                               if m["subpasta"] else m["nome_arquivo"])
+    for m in fotos_meta:
+        chave = m["subpasta"] or "sem_grupo"
+        if chave not in grupos:
+            grupos[chave] = {"letra": chave, "desc": m.get("grupo_desc", ""),
+                             "tarefas": {}}
+            ordem.append(chave)
+        tarefas = grupos[chave]["tarefas"]
+        cod = m["codigo"]
+        if cod not in tarefas:
+            tarefas[cod] = {"codigo": f"{chave.upper()}{cod}",
+                            "descricao": m["descricao"], "fotos": []}
+        caminho_interno = (f"{m['subpasta']}/{m['nome_arquivo']}"
+                           if m["subpasta"] else m["nome_arquivo"])
+
+        def carregar(caminho=caminho_interno):
             try:
-                dados = zf.read(caminho_interno)
+                return zf.read(caminho)
             except KeyError:
-                dados = None
-            tarefas[cod]["fotos"].append(dados)
+                return None
+
+        tarefas[cod]["fotos"].append(carregar)
     return [{"letra": grupos[k]["letra"], "desc": grupos[k]["desc"],
             "tarefas": list(grupos[k]["tarefas"].values())} for k in ordem]
 
@@ -530,16 +537,20 @@ def api_pdf(zid):
             imagem_obra = None
 
     try:
-        grupos_fotos = _montar_grupos_fotos(Path(entry["caminho"]), fotos_meta)
         resumo = {
             "tarefas": len({(m["subpasta"], m["codigo"]) for m in fotos_meta}),
             "fotos": len(fotos_meta),
             "grupos": len({m["subpasta"] for m in fotos_meta}),
         }
         gerado_em = datetime.now().strftime("%d/%m/%Y %H:%M")
-        pdf_bytes = relatorio_pdf.gerar_pdf(cabecalho, atividades, resumo,
-                                            grupos_fotos, gerado_em,
-                                            imagem_obra=imagem_obra)
+        # O zip precisa continuar aberto durante toda a montagem do PDF:
+        # cada foto só é lida dele no momento em que o card é desenhado
+        # (ver _montar_grupos_fotos), não antes.
+        with zipfile.ZipFile(entry["caminho"]) as zf:
+            grupos_fotos = _montar_grupos_fotos(zf, fotos_meta)
+            pdf_bytes = relatorio_pdf.gerar_pdf(cabecalho, atividades, resumo,
+                                                grupos_fotos, gerado_em,
+                                                imagem_obra=imagem_obra)
     except Exception as e:  # noqa: BLE001
         return f"Erro ao gerar o PDF: {e}", 500
 

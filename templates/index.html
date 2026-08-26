@@ -312,6 +312,9 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
           <button class="btn btn-primary" id="btnProcessar">
             <span class="spinner"></span> <span id="btnProcessarTxt">Baixar fotos</span>
           </button>
+          <button class="btn btn-ghost hidden" id="btnPdfCedo">
+            <span class="spinner"></span> <span>⬇ Baixar relatório PDF</span>
+          </button>
           <button class="btn btn-ghost" id="btnTrocar">Trocar relatório</button>
         </div>
       </div>
@@ -360,7 +363,7 @@ input:focus,select:focus{border-color:var(--brand);box-shadow:0 0 0 3px rgba(31,
 
 <script>
 const $ = s => document.querySelector(s);
-let ESTADO = { fotos:[], zipId:"", numero:null, modo:"" };
+let ESTADO = { fotos:[], zipId:"", numero:null, modo:"", pdfAutomatico:false };
 
 const ICON = {
   ok: '<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m9 12 2 2 4-4"/></svg>',
@@ -455,6 +458,7 @@ function handleEventCarregar(ev){
     renderReport(ev); renderGaleria(ev.fotos);
     $("#cardReport").classList.remove("hidden");
     $("#cardResult").classList.add("hidden");
+    $("#btnPdfCedo").classList.toggle("hidden", ev.modo!=="obra");
     $("#cardReport").scrollIntoView({behavior:"smooth",block:"start"});
   }
 }
@@ -513,7 +517,7 @@ const VEREDITO_UI = {
 };
 
 // processar (stream NDJSON)
-$("#btnProcessar").onclick = async () => {
+async function processarFotos(botaoClicado){
   const usarIA=$("#usarIA").checked;
   const payload={
     token:$("#token").value.trim(), alvo:$("#alvo").value.trim(),
@@ -521,7 +525,7 @@ $("#btnProcessar").onclick = async () => {
     provedor:$("#provedor").value, chave_ia:$("#chaveIA").value.trim()
   };
   if(usarIA && !payload.chave_ia) return toast("Informe a chave da IA (ou desmarque a auditoria).");
-  loading($("#btnProcessar"),true);
+  loading(botaoClicado,true);
   $("#cardProgress").classList.remove("hidden");
   $("#cardResult").classList.add("hidden");
   $("#log").textContent=""; $("#pbarFill").style.width="0%"; $("#progTxt").textContent="Iniciando...";
@@ -537,8 +541,13 @@ $("#btnProcessar").onclick = async () => {
       buf+=dec.decode(value,{stream:true}); const linhas=buf.split("\n"); buf=linhas.pop();
       for(const ln of linhas){ if(ln.trim()) handleEvent(JSON.parse(ln)); }
     }
-  }catch(e){ toast("Erro no processamento: "+e); }
-  finally{ loading($("#btnProcessar"),false); }
+  }catch(e){ ESTADO.pdfAutomatico=false; toast("Erro no processamento: "+e); }
+  finally{ loading(botaoClicado,false); }
+}
+$("#btnProcessar").onclick = () => processarFotos($("#btnProcessar"));
+$("#btnPdfCedo").onclick = () => {
+  ESTADO.pdfAutomatico = true;
+  processarFotos($("#btnPdfCedo"));
 };
 
 function logln(s){ const l=$("#log"); l.textContent+=s+"\n"; l.scrollTop=l.scrollHeight; }
@@ -573,8 +582,12 @@ function handleEvent(ev){
   else if(ev.tipo==="fim"){ ESTADO.zipId=ev.zip_id;
     logln("Concluído."); renderResumo(ev.resumo); $("#cardResult").classList.remove("hidden");
     $("#btnPdf").classList.toggle("hidden", ESTADO.modo!=="obra");
-    $("#cardResult").scrollIntoView({behavior:"smooth",block:"start"}); }
-  else if(ev.tipo==="erro"){ toast(ev.msg); logln("ERRO: "+ev.msg); }
+    $("#cardResult").scrollIntoView({behavior:"smooth",block:"start"});
+    if(ESTADO.pdfAutomatico){
+      ESTADO.pdfAutomatico = false;
+      if(ESTADO.zipId) location.href = "/api/pdf/"+ESTADO.zipId;
+    } }
+  else if(ev.tipo==="erro"){ ESTADO.pdfAutomatico=false; toast(ev.msg); logln("ERRO: "+ev.msg); }
 }
 
 function renderResumo(r){
